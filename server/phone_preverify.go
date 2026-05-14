@@ -2,14 +2,15 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/tinode/chat/server/auth"
 	"github.com/tinode/chat/server/store"
 )
 
@@ -36,6 +37,7 @@ type phonePreverifyConfirmResponse struct {
 type phonePreverifyEntry struct {
 	Credential string
 	Phone      string
+	Code       string
 	ExpiresAt  time.Time
 }
 
@@ -47,6 +49,7 @@ var phonePreverifyStore = struct {
 }
 
 const phonePreverifyTTL = 10 * time.Minute
+const phonePreverifyCodeLen = 4
 
 func handlePhonePreverifyStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -87,29 +90,14 @@ func handlePhonePreverifyStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	codeAuth := store.Store.GetLogicalAuthHandler("code")
-	if codeAuth == nil || !codeAuth.IsInitialized() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporary code auth is not initialized"})
-		return
-	}
-
-	rec := &auth.Rec{
-		Uid:        store.Store.GetUid(),
-		AuthLevel:  auth.LevelNone,
-		Lifetime:   auth.Duration(phonePreverifyTTL),
-		Features:   auth.FeatureNoLogin,
-		Credential: "tel:" + cred,
-	}
-
-	codeBytes, _, err := codeAuth.GenSecret(rec)
+	code, err := randomNumericCode(phonePreverifyCodeLen)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to generate verification code"})
 		return
 	}
 
-	if err := validator.ResetSecret(cred, "basic", "ru", codeBytes, nil); err != nil {
+	if err := validator.ResetSecret(cred, "basic", "ru", []byte(code), nil); err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to send flashcall"})
 		return
@@ -133,6 +121,7 @@ func handlePhonePreverifyStart(w http.ResponseWriter, r *http.Request) {
 	phonePreverifyStore.entries[verificationID] = phonePreverifyEntry{
 		Credential: "tel:" + cred,
 		Phone:      cred,
+		Code:       code,
 		ExpiresAt:  expiresAt,
 	}
 	phonePreverifyStore.mu.Unlock()
@@ -171,16 +160,8 @@ func handlePhonePreverifyConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	codeAuth := store.Store.GetLogicalAuthHandler("code")
-	if codeAuth == nil || !codeAuth.IsInitialized() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporary code auth is not initialized"})
-		return
-	}
-
-	secret := []byte(strings.TrimSpace(req.Code) + ":" + entry.Credential)
-	rec, _, err := codeAuth.Authenticate(secret, "")
-	if err != nil || rec == nil {
+	code := strings.TrimSpace(req.Code)
+	if subtle.ConstantTimeCompare([]byte(code), []byte(entry.Code)) != 1 {
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid verification code"})
 		return
@@ -203,4 +184,20 @@ func randomHex(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func randomNumericCode(length int) (string, error) {
+	if length <= 0 {
+		return "", fmt.Errorf("invalid code length")
+	}
+	max := byte(10)
+	out := make([]byte, length)
+	buf := make([]byte, length)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	for i := 0; i < length; i++ {
+		out[i] = '0' + (buf[i] % max)
+	}
+	return string(out), nil
 }
