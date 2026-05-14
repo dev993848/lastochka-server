@@ -2204,6 +2204,8 @@ func (t *Topic) replyGetDesc(sess *Session, asUid types.Uid, _ bool, opts *MsgGe
 func (t *Topic) replySetDesc(sess *Session, asUid types.Uid, asChan bool,
 	authLevel auth.Level, msg *ClientComMessage) error {
 	now := types.TimeNow()
+	var oldPublicAddress string
+	var newPublicAddress string
 
 	assignAccess := func(upd map[string]any, mode *MsgDefaultAcsMode) error {
 		if mode == nil {
@@ -2269,9 +2271,13 @@ func (t *Topic) replySetDesc(sess *Session, asUid types.Uid, asChan bool,
 		switch t.cat {
 		case types.TopicCatMe:
 			// Update current user
+			oldPublicAddress = extractPublicAddress(t.public)
 			err = assignAccess(core, set.Desc.DefaultAcs)
 			sendCommon = assignGenericValues(core, "Public", t.public, set.Desc.Public)
 			sendCommon = assignGenericValues(core, "Trusted", t.trusted, set.Desc.Trusted) || sendCommon
+			if public, ok := core["Public"]; ok {
+				newPublicAddress = extractPublicAddress(public)
+			}
 		case types.TopicCatFnd:
 			// set.Desc.DefaultAcs is ignored.
 			if set.Desc.Trusted != nil {
@@ -2314,6 +2320,12 @@ func (t *Topic) replySetDesc(sess *Session, asUid types.Uid, asChan bool,
 	}
 
 	if len(core) > 0 {
+		if t.cat == types.TopicCatMe && newPublicAddress != "" && newPublicAddress != oldPublicAddress {
+			if err = ensurePublicAddressAvailable(newPublicAddress, asUid); err != nil {
+				sess.queueOut(decodeStoreError(err, msg.Id, now, map[string]any{"what": "public_address"}))
+				return err
+			}
+		}
 		core["UpdatedAt"] = now
 		switch t.cat {
 		case types.TopicCatMe:
@@ -2335,6 +2347,22 @@ func (t *Topic) replySetDesc(sess *Session, asUid types.Uid, asChan bool,
 	if err != nil {
 		sess.queueOut(ErrUnknownReply(msg, now))
 		return err
+	}
+
+	if t.cat == types.TopicCatMe && oldPublicAddress != newPublicAddress {
+		var addTags []string
+		var removeTags []string
+		if oldPublicAddress != "" {
+			removeTags = append(removeTags, "uname:"+oldPublicAddress)
+		}
+		if newPublicAddress != "" {
+			addTags = append(addTags, "uname:"+newPublicAddress)
+		}
+		if len(addTags) > 0 || len(removeTags) > 0 {
+			if _, tagErr := store.Users.UpdateTags(asUid, addTags, removeTags, nil); tagErr != nil {
+				logs.Warn.Printf("topic[%s] failed to sync public address tags: %v", t.name, tagErr)
+			}
+		}
 	}
 
 	if len(core) > 0 && msg.Extra != nil && len(msg.Extra.Attachments) > 0 {

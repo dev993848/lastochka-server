@@ -12,17 +12,23 @@ import (
 
 // CheckAvailabilityRequest - запрос на проверку доступности
 type CheckAvailabilityRequest struct {
+	// Deprecated: use PublicAddress.
 	Login string `json:"login,omitempty"`
-	Email string `json:"email,omitempty"`
-	Phone string `json:"phone,omitempty"`
+	// Public address used for user addressing and search (maps to public.uname).
+	PublicAddress string `json:"public_address,omitempty"`
+	Email         string `json:"email,omitempty"`
+	Phone         string `json:"phone,omitempty"`
 }
 
 // CheckAvailabilityResponse - ответ проверки доступности
 type CheckAvailabilityResponse struct {
-	LoginAvailable bool   `json:"login_available"`
-	EmailAvailable bool   `json:"email_available"`
-	PhoneAvailable bool   `json:"phone_available"`
-	Error          string `json:"error,omitempty"`
+	// Deprecated: use PublicAddressAvailable.
+	LoginAvailable bool `json:"login_available"`
+	// Availability of public_address (public.uname).
+	PublicAddressAvailable bool   `json:"public_address_available"`
+	EmailAvailable         bool   `json:"email_available"`
+	PhoneAvailable         bool   `json:"phone_available"`
+	Error                  string `json:"error,omitempty"`
 }
 
 // handleCheckAvailability - HTTP handler для проверки доступности
@@ -58,33 +64,43 @@ func handleCheckAvailability(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := CheckAvailabilityResponse{
-		LoginAvailable: true,
-		EmailAvailable: true,
-		PhoneAvailable: true,
+		LoginAvailable:         true,
+		PublicAddressAvailable: true,
+		EmailAvailable:         true,
+		PhoneAvailable:         true,
 	}
 
-	// Проверка логина
-	if req.Login != "" {
-		login := strings.TrimSpace(req.Login)
-		if len(login) < 3 {
+	publicAddress := strings.TrimSpace(strings.ToLower(req.PublicAddress))
+	// Backward compatibility for old clients sending "login".
+	if publicAddress == "" {
+		publicAddress = strings.TrimSpace(strings.ToLower(req.Login))
+	}
+
+	// Проверка публичного адреса
+	if publicAddress != "" {
+		if _, ok := normalizePublicAddress(publicAddress); !ok {
+			resp.PublicAddressAvailable = false
 			resp.LoginAvailable = false
-			resp.Error = "Логин слишком короткий"
+			resp.Error = "Неверный формат публичного адреса"
 			writeJSON(w, resp)
 			return
 		}
 
-		// Проверяем наличие в базе
-		found, err := getUserByLogin(login)
+		// Проверяем наличие в базе через индексируемый tag namespace uname:*.
+		// Важно: для корректной работы существующие пользователи должны быть backfilled.
+		found, err := getUserByPublicAddress(publicAddress)
 		if err != nil {
-			logs.Warn.Printf("Ошибка проверки логина '%s': %v", login, err)
+			logs.Warn.Printf("Ошибка проверки public_address '%s': %v", publicAddress, err)
+			resp.PublicAddressAvailable = false
 			resp.LoginAvailable = false
-			resp.Error = "Ошибка проверки логина"
+			resp.Error = "Ошибка проверки публичного адреса"
 			writeJSON(w, resp)
 			return
 		}
-		if found != nil {
+		if found != "" {
+			resp.PublicAddressAvailable = false
 			resp.LoginAvailable = false
-			resp.Error = "Этот логин уже занят"
+			resp.Error = "Этот публичный адрес уже занят"
 		}
 	}
 
@@ -151,7 +167,14 @@ func isValidEmail(email string) bool {
 	return true
 }
 
+// getUserByPublicAddress - поиск пользователя по тегу `uname:<public_address>`.
+// Возвращает UID-подобный user id (usr...) либо пустую строку.
+func getUserByPublicAddress(address string) (string, error) {
+	return store.Users.FindOne("uname:" + address)
+}
+
 // getUserByLogin - поиск пользователя по логину (basic auth)
+// Deprecated: для публичного адреса используйте getUserByPublicAddress.
 func getUserByLogin(login string) (*types.User, error) {
 	uid, _, _, _, err := store.Users.GetAuthUniqueRecord("basic", login)
 	if err != nil {
@@ -169,7 +192,6 @@ func getUserByLogin(login string) (*types.User, error) {
 	}
 	return &users[0], nil
 }
-
 
 // writeJSON - запись JSON ответа
 func writeJSON(w http.ResponseWriter, data interface{}) {

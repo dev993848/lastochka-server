@@ -3,6 +3,7 @@ package main
 import (
 	"container/heap"
 	"math/rand"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -15,6 +16,8 @@ import (
 	"github.com/tinode/chat/server/store"
 	"github.com/tinode/chat/server/store/types"
 )
+
+var publicAddressPattern = regexp.MustCompile(`^[a-z0-9_]{3,32}$`)
 
 const (
 	// Unread counter update return codes.
@@ -143,6 +146,14 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	// Server-side search tags from trusted registration payload:
 	// - name tokens from public.fn
 	// - normalized validator tags (email/tel/etc.) from credentials
+	if publicAddress := extractPublicAddress(user.Public); publicAddress != "" {
+		if err := ensurePublicAddressAvailable(publicAddress, types.ZeroUid); err != nil {
+			logs.Warn.Println("create user: public address is already taken", publicAddress, "sid=", s.sid)
+			s.queueOut(decodeStoreError(err, msg.Id, msg.Timestamp,
+				map[string]any{"what": "public_address"}))
+			return
+		}
+	}
 	profileTags := buildProfileSearchTags(user.Public)
 	user.Tags = normalizeTags(append(user.Tags, append(profileTags, credTags...)...), globals.maxTagCount)
 
@@ -245,21 +256,63 @@ func buildProfileSearchTags(public any) []string {
 		return nil
 	}
 
+	var tags []string
+	if uname, _ := pub["uname"].(string); uname != "" {
+		if normalized, ok := normalizePublicAddress(uname); ok {
+			tags = append(tags, "uname:"+normalized, "name:"+normalized)
+		}
+	}
+
 	fullName, ok := pub["fn"].(string)
 	if !ok {
-		return nil
+		return tags
 	}
 
 	fullName = strings.ToLower(strings.TrimSpace(fullName))
 	if fullName == "" {
-		return nil
+		return tags
 	}
 
-	var tags []string
 	for _, token := range splitNameTokens(fullName) {
 		tags = append(tags, "fn:"+token, "name:"+token)
 	}
 	return tags
+}
+
+func normalizePublicAddress(raw string) (string, bool) {
+	address := strings.TrimSpace(strings.ToLower(raw))
+	if !publicAddressPattern.MatchString(address) {
+		return "", false
+	}
+	return address, true
+}
+
+func extractPublicAddress(public any) string {
+	pub, ok := public.(map[string]any)
+	if !ok || pub == nil {
+		return ""
+	}
+	uname, _ := pub["uname"].(string)
+	normalized, ok := normalizePublicAddress(uname)
+	if !ok {
+		return ""
+	}
+	return normalized
+}
+
+func ensurePublicAddressAvailable(address string, selfUid types.Uid) error {
+	found, err := store.Users.FindOne("uname:" + address)
+	if err != nil {
+		return err
+	}
+	if found == "" {
+		return nil
+	}
+	foundUid := types.ParseUserId(found)
+	if !selfUid.IsZero() && foundUid == selfUid {
+		return nil
+	}
+	return types.ErrDuplicate
 }
 
 func splitNameTokens(name string) []string {
