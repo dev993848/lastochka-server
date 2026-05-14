@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"github.com/tinode/chat/server/logs"
 	"github.com/tinode/chat/server/store"
@@ -132,8 +133,15 @@ func handleCheckAvailability(w http.ResponseWriter, r *http.Request) {
 	// Проверка телефона
 	if req.Phone != "" {
 		phone := strings.TrimSpace(req.Phone)
+		digits, e164 := normalizePhoneForAvailability(phone)
 
 		exists, err := store.Users.CredExists("tel", phone)
+		if err == nil && !exists && digits != "" && digits != phone {
+			exists, err = store.Users.CredExists("tel", digits)
+		}
+		if err == nil && !exists && e164 != "" && e164 != phone {
+			exists, err = store.Users.CredExists("tel", e164)
+		}
 		if err != nil {
 			logs.Warn.Printf("Ошибка проверки телефона '%s': %v", phone, err)
 			resp.PhoneAvailable = false
@@ -150,6 +158,29 @@ func handleCheckAvailability(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, resp)
+}
+
+func normalizePhoneForAvailability(input string) (digits string, e164 string) {
+	var b strings.Builder
+	for _, r := range input {
+		if unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	digits = b.String()
+	if digits == "" {
+		return "", ""
+	}
+
+	// RU-local normalization: 8XXXXXXXXXX -> 7XXXXXXXXXX
+	if len(digits) == 11 && digits[0] == '8' {
+		digits = "7" + digits[1:]
+	}
+	if len(digits) == 10 {
+		digits = "7" + digits
+	}
+	e164 = "+" + digits
+	return digits, e164
 }
 
 // isValidEmail - простая валидация email
