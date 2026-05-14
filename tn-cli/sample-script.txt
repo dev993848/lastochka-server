@@ -1,0 +1,78 @@
+# This script shows what can be done with tn-cli. Run it as
+#
+#   python tn-cli.py --no-login < sample-script.txt
+#
+# The script performs the following:
+#
+#  - Creates a new user Test User
+#  - Uses 'fnd' topic to locate user Alice
+#  - Subscribes Test User to Alice
+#  - Sends typing notification to Alice
+#  - Sends a message to Alice
+#  - Creates a group topic Test Group
+#  - Adds Alice to the Test Group
+#  - Sends a message with a drafty-formatted form to the Test Group
+#  - Deletes Test Group
+#  - Deletes Test User
+
+# Create user 'Test User'
+
+.must $user acc --scheme=basic --secret=test:test123 \
+  --fn='Test User' --photo=./test-128.jpg --tags=test,test-user --do-login \
+  --auth=JRWPA --anon=JW \
+  --cred=email:test@example.com
+
+# Print out user's auth token.
+# Params is a map, thus must be addressed as params[x] instead of params.x
+.log $user.params[token]
+
+# Login and confirm credentials with a dummy response
+.must login --scheme=token --secret=$user.params[token] --cred=email::123456
+
+# Alternatively just login with an existing user.
+# .must $user login bob:bob123
+
+# Find Alice
+.must sub fnd
+.must set fnd --public=email:alice@example.com
+.must $meta get fnd --sub
+
+# Print out Alice's UID.
+.log $meta.sub[0].topic
+
+# Subscribe to Alice
+.must sub $meta.sub[0].topic
+
+# Send typing notification to Alice (async)
+note $meta.sub[0].topic
+
+# Send a plain text message to Alice (async)
+pub $meta.sub[0].topic 'Hello, Alice'
+
+# Create a new group topic Test Group
+.must $group sub new --fn='Test Group' --tags=test,test-group \
+  --auth=JRWPA --anon=JR
+
+# Add Alice to the new topic.
+.must set $group.topic --user=$meta.sub[0].topic
+
+# Publish a drafty-formatted form to the new topic.
+pub $group.topic --drafty='{"txt": "What’s your favorite color?red green none",\
+  "fmt": [ {"at": 0, "len": 42, "tp": "FM"}, {"at": 0, "len": 27, "tp": "ST"},\
+  {"at": 27, "len": 14, "tp": "RW"}, {"at": 27, "len": 3, "key": 0}, {"at": 31, "len": 5, "key": 1},\
+  {"at": 37, "len": 4, "key": 2} ], "ent": [ {"tp": "BN", "data": {"name": "red", "act": "pub", "val": 3840}},\
+  {"tp": "BN", "data": {"name": "green", "act": "pub", "val": 240}},\
+  {"tp": "BN", "data": {"name": "none", "act": "pub"}}]}'
+
+
+# Wait 2 seconds before cleaning up.
+.sleep 2000
+
+# Delete Test Group.
+.await del topic --topic=$group.topic --hard
+
+# Delete Test User
+.await del user --hard
+
+# Wait for more messages before exiting.
+.sleep 1000

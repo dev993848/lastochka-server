@@ -1,0 +1,43 @@
+FROM alpine:3.22
+
+RUN apk add --no-cache ca-certificates bash grep netcat-openbsd
+
+WORKDIR /opt/tinode
+
+# Готовые бинарники (собраны заранее под linux/amd64)
+COPY tinode-server ./tinode
+COPY init-db .
+COPY docker/tinode/entrypoint.sh .
+COPY docker/tinode/config.template .
+
+RUN chmod +x entrypoint.sh tinode init-db
+
+RUN mkdir -p static uploads /botdata /var/log
+
+ENV STORE_USE_ADAPTER=postgres
+ENV POSTGRES_DSN="postgresql://postgres:postgres@localhost:5432/tinode?sslmode=disable&connect_timeout=10"
+ENV TLS_ENABLED=false
+ENV FCM_PUSH_ENABLED=false
+ENV FCM_INCLUDE_ANDROID_NOTIFICATION=false
+ENV TNPG_PUSH_ENABLED=false
+ENV WEBRTC_ENABLED=false
+ENV ACC_GC_ENABLED=false
+ENV PLUGIN_PYTHON_CHAT_BOT_ENABLED=false
+ENV MEDIA_HANDLER=fs
+ENV FS_CORS_ORIGINS='["*"]'
+ENV AWS_CORS_ORIGINS='["*"]'
+ENV API_KEY_SALT=T713/rYYgW7g4m3vG6zGRh7+FM1t0T8j13koXScOAj4=
+ENV AUTH_TOKEN_KEY=wfaY2RgF2S1OQI/ZlK+LSrp1KB2jwAdGAIHQ7JZn+Kc=
+ENV UID_ENCRYPTION_KEY=la6YsO+bNX/+XIkOqc5Svw==
+ENV DEFAULT_COUNTRY_CODE=RU
+ENV RESET_DB=false
+ENV UPGRADE_DB=false
+ENV NO_DB_INIT=false
+ENV WAIT_FOR=
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
+    CMD nc -z localhost 6060 || exit 1
+
+EXPOSE 6060 16060
+
+ENTRYPOINT ["./entrypoint.sh"]

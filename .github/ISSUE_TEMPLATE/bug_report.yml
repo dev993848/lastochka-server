@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible problem in Lastochka Server (Tinode fork)
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report.
+        Please include enough detail to reproduce the issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact sequence of steps.
+      placeholder: |
+        1. Start server with ...
+        2. Send request ...
+        3. Observe error ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Go version, DB, commit SHA, config details (without secrets).
+    validations:
+      required: true

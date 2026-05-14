@@ -1,0 +1,51 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts and binaries
+bin/
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.o
+*.out
+*.test
+coverage.*
+*.coverprofile
+tinode-server
+
+# Go
+vendor/
+
+# Python tooling
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs / runtime temp
+*.log
+tmp/
+temp/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+
+# Local Docker overrides
+docker-compose.override.yml

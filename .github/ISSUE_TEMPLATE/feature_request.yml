@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a new capability for Lastochka Server
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe your preferred approach.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: upstream
+    attributes:
+      label: Upstream impact
+      description: Should this be kept fork-specific or proposed upstream to Tinode?
