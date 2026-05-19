@@ -13,14 +13,16 @@ import (
 )
 
 type redsmsConfig struct {
-	Login   string `json:"login"`
-	APIKey  string `json:"api_key"`
-	Route   string `json:"route"`
-	BaseURL string `json:"base_url"`
+	Login      string `json:"login"`
+	APIKey     string `json:"api_key"`
+	Route      string `json:"route"`
+	BaseURL    string `json:"base_url"`
+	SenderName string `json:"sender_name"`
 }
 
 type redsmsMessageRequest struct {
 	Route string `json:"route"`
+	From  string `json:"from,omitempty"`
 	To    string `json:"to"`
 	Text  string `json:"text"`
 }
@@ -35,11 +37,12 @@ type redsmsMessageResponse struct {
 }
 
 var redsmsClient struct {
-	login   string
-	apiKey  string
-	route   string
-	baseURL string
-	client  *http.Client
+	login      string
+	apiKey     string
+	route      string
+	baseURL    string
+	senderName string
+	client     *http.Client
 }
 
 func redsmsInit(jsonconf json.RawMessage) error {
@@ -56,7 +59,7 @@ func redsmsInit(jsonconf json.RawMessage) error {
 
 	conf.Route = strings.TrimSpace(conf.Route)
 	if conf.Route == "" {
-		conf.Route = "fcall"
+		conf.Route = "sms"
 	}
 
 	conf.BaseURL = strings.TrimSpace(conf.BaseURL)
@@ -68,6 +71,7 @@ func redsmsInit(jsonconf json.RawMessage) error {
 	redsmsClient.apiKey = conf.APIKey
 	redsmsClient.route = conf.Route
 	redsmsClient.baseURL = conf.BaseURL
+	redsmsClient.senderName = strings.TrimSpace(conf.SenderName)
 	redsmsClient.client = &http.Client{Timeout: 10 * time.Second}
 
 	return nil
@@ -80,6 +84,7 @@ func redsmsSend(to, code string) error {
 
 	reqBody := redsmsMessageRequest{
 		Route: redsmsClient.route,
+		From:  redsmsClient.senderName,
 		To:    to,
 		Text:  code,
 	}

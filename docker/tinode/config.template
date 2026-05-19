@@ -127,8 +127,9 @@
 				"redsms_conf": {
 					"login": "$REDSMS_LOGIN",
 					"api_key": "$REDSMS_API_KEY",
-					"route": "fcall",
-					"base_url": "https://cp.redsms.ru/api/message"
+					"route": "sms",
+					"base_url": "https://cp.redsms.ru/api/message",
+					"sender_name": "$REDSMS_SENDER_NAME"
 				},
 				"max_retries": 3,
 				"debug_response": "$DEBUG_TEL_VERIFICATION_CODE"
