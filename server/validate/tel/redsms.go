@@ -78,12 +78,21 @@ func redsmsInit(jsonconf json.RawMessage) error {
 }
 
 func redsmsSend(to, code string) error {
+	return redsmsSendWithRoute(to, code, "")
+}
+
+func redsmsSendWithRoute(to, code, routeOverride string) error {
 	ts := fmt.Sprintf("ts-%d", time.Now().UnixMilli())
 	sum := md5.Sum([]byte(ts + redsmsClient.apiKey))
 	secret := hex.EncodeToString(sum[:])
 
+	route := strings.TrimSpace(routeOverride)
+	if route == "" {
+		route = redsmsClient.route
+	}
+
 	reqBody := redsmsMessageRequest{
-		Route: redsmsClient.route,
+		Route: route,
 		From:  redsmsClient.senderName,
 		To:    to,
 		Text:  code,

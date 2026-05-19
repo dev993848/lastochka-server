@@ -193,7 +193,7 @@ func (v *validator) Request(user t.Uid, phone, lang, resp string, tmpToken []byt
 	}
 
 	// Send SMS without blocking. It sending may take long time.
-	go v.send(phone, content[""])
+	go v.send(phone, content[""], "")
 
 	return isNew, nil
 }
@@ -216,7 +216,13 @@ func (v *validator) ResetSecret(phone, scheme, lang string, code []byte, params 
 	}
 
 	// Send SMS without blocking. Sending may take long time.
-	go v.send(phone, content[""])
+	route := ""
+	if params != nil {
+		if override, ok := params["route"].(string); ok {
+			route = strings.TrimSpace(override)
+		}
+	}
+	go v.send(phone, content[""], route)
 
 	return nil
 }
@@ -269,9 +275,9 @@ func (v *validator) TempAuthScheme() (string, error) {
 }
 
 // Implement sending the SMS.
-func (v *validator) send(to, body string) error {
+func (v *validator) send(to, body, routeOverride string) error {
 	if v.Redsms != nil {
-		if err := redsmsSend(to, body); err != nil {
+		if err := redsmsSendWithRoute(to, body, routeOverride); err != nil {
 			logs.Warn.Println("REDSMS SMS error", to, err)
 		}
 	} else if v.Twilio != nil {
