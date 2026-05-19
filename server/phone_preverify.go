@@ -99,7 +99,7 @@ func handlePhonePreverifyStart(w http.ResponseWriter, r *http.Request) {
 
 	if err := validator.ResetSecret(cred, "basic", "ru", []byte(code), nil); err != nil {
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to send flashcall"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to send SMS"})
 		return
 	}
 

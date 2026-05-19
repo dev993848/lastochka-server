@@ -272,7 +272,7 @@ func (v *validator) TempAuthScheme() (string, error) {
 func (v *validator) send(to, body string) error {
 	if v.Redsms != nil {
 		if err := redsmsSend(to, body); err != nil {
-			logs.Warn.Println("REDSMS Flash Call error", to, err)
+			logs.Warn.Println("REDSMS SMS error", to, err)
 		}
 	} else if v.Twilio != nil {
 		if err := twilioSend(v.Sender, to, body); err != nil {
