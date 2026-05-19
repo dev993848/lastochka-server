@@ -783,6 +783,7 @@ func main() {
 	mux.HandleFunc(config.ApiPath+"v1/check-availability", handleCheckAvailability)
 	// Handle phone pre-verification endpoints (no auth required)
 	mux.HandleFunc(config.ApiPath+"v1/auth/phone/preverify/start", handlePhonePreverifyStart)
+	mux.HandleFunc(config.ApiPath+"v1/auth/phone/preverify/resend-sms", handlePhonePreverifyResendSms)
 	mux.HandleFunc(config.ApiPath+"v1/auth/phone/preverify/confirm", handlePhonePreverifyConfirm)
 	// Handle legacy account migration endpoint (no auth required)
 	mux.HandleFunc(config.ApiPath+"v1/legacy/migrate-phone", handleLegacyPhoneMigration)
