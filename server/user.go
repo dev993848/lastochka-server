@@ -2,8 +2,12 @@ package main
 
 import (
 	"container/heap"
+	"hash/fnv"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -18,6 +22,16 @@ import (
 )
 
 var publicAddressPattern = regexp.MustCompile(`^[a-z0-9_]{3,32}$`)
+
+var femaleFirstNames = map[string]struct{}{
+	"анна": {}, "мария": {}, "елена": {}, "ольга": {}, "наталья": {}, "ирина": {}, "татьяна": {}, "екатерина": {}, "светлана": {}, "юлия": {},
+	"ксения": {}, "алёна": {}, "алена": {}, "полина": {}, "дарья": {}, "виктория": {}, "людмила": {}, "зоя": {}, "лидия": {}, "надежда": {},
+}
+
+var maleFirstNames = map[string]struct{}{
+	"александр": {}, "дмитрий": {}, "максим": {}, "сергей": {}, "андрей": {}, "алексей": {}, "евгений": {}, "владимир": {}, "николай": {}, "михаил": {},
+	"иван": {}, "павел": {}, "денис": {}, "артем": {}, "артём": {}, "роман": {}, "илья": {}, "кирилл": {}, "игорь": {}, "олег": {},
+}
 
 const (
 	// Unread counter update return codes.
@@ -143,6 +157,8 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 		}
 	}
 
+	user.Public = ensureDefaultAvatarInPublic(user.Public, creds)
+
 	// Server-side search tags from trusted registration payload:
 	// - name tokens from public.fn
 	// - normalized validator tags (email/tel/etc.) from credentials
@@ -247,6 +263,152 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	s.queueOut(reply)
 
 	pluginAccount(&user, plgActCreate)
+}
+
+func ensureDefaultAvatarInPublic(public any, creds []MsgCredClient) any {
+	if public != nil {
+		if _, ok := public.(map[string]any); !ok {
+			return public
+		}
+	}
+	pub, _ := public.(map[string]any)
+	if pub == nil {
+		pub = map[string]any{}
+	}
+
+	if photo, _ := pub["photo"].(string); strings.TrimSpace(photo) != "" {
+		return pub
+	}
+
+	fullName, _ := pub["fn"].(string)
+	uname, _ := pub["uname"].(string)
+	gender := inferGenderFromName(fullName)
+	avatarURL := pickDefaultAvatarURL(gender, fullName, uname, creds)
+	if avatarURL != "" {
+		pub["photo"] = avatarURL
+	}
+
+	return pub
+}
+
+func inferGenderFromName(fullName string) string {
+	name := strings.TrimSpace(strings.ToLower(fullName))
+	if name == "" {
+		return ""
+	}
+	first := strings.FieldsFunc(name, func(r rune) bool {
+		return !(unicode.IsLetter(r) || r == '-')
+	})
+	if len(first) == 0 {
+		return ""
+	}
+	n := first[0]
+
+	if _, ok := femaleFirstNames[n]; ok {
+		return "woman"
+	}
+	if _, ok := maleFirstNames[n]; ok {
+		return "man"
+	}
+
+	femaleSuffixes := []string{"ия", "ья", "а", "я"}
+	for _, s := range femaleSuffixes {
+		if strings.HasSuffix(n, s) {
+			return "woman"
+		}
+	}
+
+	maleSuffixes := []string{"й", "н", "р", "м", "в", "г", "д", "б", "п", "т", "с", "к", "л", "х"}
+	for _, s := range maleSuffixes {
+		if strings.HasSuffix(n, s) {
+			return "man"
+		}
+	}
+
+	return ""
+}
+
+func pickDefaultAvatarURL(gender, fullName, uname string, creds []MsgCredClient) string {
+	all, men, women := listDefaultAvatars()
+	if len(all) == 0 {
+		return ""
+	}
+
+	seedParts := []string{strings.ToLower(strings.TrimSpace(fullName)), strings.ToLower(strings.TrimSpace(uname))}
+	for _, c := range creds {
+		if c.Method == "tel" || c.Method == "email" {
+			seedParts = append(seedParts, c.Method+":"+strings.ToLower(strings.TrimSpace(c.Value)))
+		}
+	}
+	seed := strings.Join(seedParts, "|")
+	if strings.TrimSpace(seed) == "" {
+		seed = "default"
+	}
+
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(seed))
+	hash := h.Sum32()
+
+	pool := all
+	if gender == "man" && len(men) > 0 {
+		pool = men
+	} else if gender == "woman" && len(women) > 0 {
+		pool = women
+	} else {
+		if hash%2 == 0 && len(men) > 0 {
+			pool = men
+		} else if len(women) > 0 {
+			pool = women
+		}
+	}
+
+	idx := int(hash % uint32(len(pool)))
+	return pool[idx]
+}
+
+func listDefaultAvatars() (all, men, women []string) {
+	candidates := []string{
+		filepath.Join("static", "avatars"),
+		filepath.Join("..", "static", "avatars"),
+		filepath.Join(".", "static", "avatars"),
+	}
+	base := ""
+	for _, p := range candidates {
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			base = p
+			break
+		}
+	}
+	if base == "" {
+		return nil, nil, nil
+	}
+
+	load := func(bucket string) []string {
+		dir := filepath.Join(base, bucket)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil
+		}
+		out := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := strings.ToLower(e.Name())
+			if !(strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") || strings.HasSuffix(name, ".webp")) {
+				continue
+			}
+			out = append(out, "/static/avatars/"+bucket+"/"+e.Name())
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	men = load("man")
+	women = load("woman")
+	all = append(append([]string{}, men...), women...)
+	sort.Strings(all)
+	return all, men, women
 }
 
 // buildProfileSearchTags builds searchable tags from user profile.

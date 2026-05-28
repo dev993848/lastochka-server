@@ -49,3 +49,7 @@ temp/
 
 # Local Docker overrides
 docker-compose.override.yml
+
+# Local avatar datasets
+static/avatars/man/
+static/avatars/woman/

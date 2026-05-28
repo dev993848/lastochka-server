@@ -28,12 +28,20 @@ type redsmsMessageRequest struct {
 }
 
 type redsmsMessageResponse struct {
+	Items   []redsmsMessageItem `json:"items"`
 	Success bool `json:"success"`
 	Count   int  `json:"count"`
 	Errors  []struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	} `json:"errors"`
+}
+
+type redsmsMessageItem struct {
+	UUID         string `json:"uuid"`
+	Status       string `json:"status"`
+	To           string `json:"to"`
+	ReplacedFrom string `json:"replacedFrom"`
 }
 
 var redsmsClient struct {
@@ -81,7 +89,27 @@ func redsmsSend(to, code string) error {
 	return redsmsSendWithRoute(to, code, "")
 }
 
+func redsmsSendWaitCall(to, code string) (string, error) {
+	resp, err := redsmsSendWithRouteDetailed(to, code, "wcall")
+	if err != nil {
+		return "", err
+	}
+	if len(resp.Items) == 0 {
+		return "", errors.New("redsms wait-call response has no items")
+	}
+	callNumber := strings.TrimSpace(resp.Items[0].ReplacedFrom)
+	if callNumber == "" {
+		return "", errors.New("redsms wait-call response has empty replacedFrom")
+	}
+	return callNumber, nil
+}
+
 func redsmsSendWithRoute(to, code, routeOverride string) error {
+	_, err := redsmsSendWithRouteDetailed(to, code, routeOverride)
+	return err
+}
+
+func redsmsSendWithRouteDetailed(to, code, routeOverride string) (*redsmsMessageResponse, error) {
 	ts := fmt.Sprintf("ts-%d", time.Now().UnixMilli())
 	sum := md5.Sum([]byte(ts + redsmsClient.apiKey))
 	secret := hex.EncodeToString(sum[:])
@@ -99,12 +127,12 @@ func redsmsSendWithRoute(to, code, routeOverride string) error {
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodPost, redsmsClient.baseURL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("login", redsmsClient.login)
 	req.Header.Set("ts", ts)
@@ -113,24 +141,24 @@ func redsmsSendWithRoute(to, code, routeOverride string) error {
 
 	resp, err := redsmsClient.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("redsms returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("redsms returned status %d", resp.StatusCode)
 	}
 
 	var data redsmsMessageResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return err
+		return nil, err
 	}
 	if !data.Success {
 		if len(data.Errors) > 0 {
-			return fmt.Errorf("redsms error %d: %s", data.Errors[0].Code, data.Errors[0].Message)
+			return nil, fmt.Errorf("redsms error %d: %s", data.Errors[0].Code, data.Errors[0].Message)
 		}
-		return errors.New("redsms request failed")
+		return nil, errors.New("redsms request failed")
 	}
 
-	return nil
+	return &data, nil
 }

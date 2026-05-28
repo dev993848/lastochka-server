@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tinode/chat/server/store"
+	telvalidate "github.com/tinode/chat/server/validate/tel"
 )
 
 type phonePreverifyStartRequest struct {
@@ -22,6 +23,7 @@ type phonePreverifyStartRequest struct {
 type phonePreverifyStartResponse struct {
 	VerificationID string `json:"verification_id"`
 	ExpiresIn      int64  `json:"expires_in"`
+	CallNumber     string `json:"call_number,omitempty"`
 }
 
 type phonePreverifyResendSmsRequest struct {
@@ -103,9 +105,16 @@ func handlePhonePreverifyStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validator.ResetSecret(cred, "basic", "ru", []byte(code), nil); err != nil {
+	if !telvalidate.IsRedsmsConfigured() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "redsms wait-call is not configured"})
+		return
+	}
+
+	callNumber, err := telvalidate.SendWaitCall(cred, code)
+	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to send SMS"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to send wait-call"})
 		return
 	}
 
@@ -137,6 +146,7 @@ func handlePhonePreverifyStart(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(phonePreverifyStartResponse{
 		VerificationID: verificationID,
 		ExpiresIn:      int64(phonePreverifyTTL / time.Second),
+		CallNumber:     callNumber,
 	})
 }
 
@@ -146,63 +156,8 @@ func handlePhonePreverifyResendSms(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
 		return
 	}
-
-	var req phonePreverifyResendSmsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	verificationID := strings.TrimSpace(req.VerificationID)
-	if verificationID == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "verification_id is required"})
-		return
-	}
-
-	phonePreverifyStore.mu.Lock()
-	entry, ok := phonePreverifyStore.entries[verificationID]
-	if ok && entry.ExpiresAt.Before(time.Now()) {
-		delete(phonePreverifyStore.entries, verificationID)
-		ok = false
-	}
-	phonePreverifyStore.mu.Unlock()
-	if !ok {
-		w.WriteHeader(http.StatusGone)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "verification session expired"})
-		return
-	}
-
-	if wait := time.Until(entry.CreatedAt.Add(phonePreverifySmsFallbackDelay)); wait > 0 {
-		retryAfter := int(wait.Seconds())
-		if retryAfter < 1 {
-			retryAfter = 1
-		}
-		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
-		w.WriteHeader(http.StatusTooManyRequests)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error":                "sms fallback is not available yet",
-			"retry_after_seconds": retryAfter,
-		})
-		return
-	}
-
-	validator := store.Store.GetValidator("tel")
-	if validator == nil || !validator.IsInitialized() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "tel validator is not initialized"})
-		return
-	}
-
-	if err := validator.ResetSecret(entry.Phone, "basic", "ru", []byte(entry.Code), map[string]any{"route": "sms"}); err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to send SMS"})
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	w.WriteHeader(http.StatusGone)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "sms fallback is disabled; use wait-call flow"})
 }
 
 func handlePhonePreverifyConfirm(w http.ResponseWriter, r *http.Request) {
