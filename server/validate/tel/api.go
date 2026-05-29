@@ -9,3 +9,11 @@ func IsRedsmsConfigured() bool {
 func SendWaitCall(to, code string) (string, error) {
 	return redsmsSendWaitCall(to, code)
 }
+
+func SendWaitCallNoCode(to string) (string, string, error) {
+	return redsmsSendWaitCallNoCode(to)
+}
+
+func CheckWaitCallStatus(uuid string) (string, error) {
+	return redsmsCheckMessageStatus(uuid)
+}

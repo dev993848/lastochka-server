@@ -24,7 +24,7 @@ type redsmsMessageRequest struct {
 	Route string `json:"route"`
 	From  string `json:"from,omitempty"`
 	To    string `json:"to"`
-	Text  string `json:"text"`
+	Text  string `json:"text,omitempty"`
 }
 
 type redsmsMessageResponse struct {
@@ -102,6 +102,58 @@ func redsmsSendWaitCall(to, code string) (string, error) {
 		return "", errors.New("redsms wait-call response has empty replacedFrom")
 	}
 	return callNumber, nil
+}
+
+func redsmsSendWaitCallNoCode(to string) (string, string, error) {
+	resp, err := redsmsSendWithRouteDetailed(to, "", "wcall")
+	if err != nil {
+		return "", "", err
+	}
+	if len(resp.Items) == 0 {
+		return "", "", errors.New("redsms wait-call response has no items")
+	}
+	callNumber := strings.TrimSpace(resp.Items[0].ReplacedFrom)
+	if callNumber == "" {
+		return "", "", errors.New("redsms wait-call response has empty replacedFrom")
+	}
+	msgUUID := strings.TrimSpace(resp.Items[0].UUID)
+	if msgUUID == "" {
+		return "", "", errors.New("redsms wait-call response has empty uuid")
+	}
+	return callNumber, msgUUID, nil
+}
+
+func redsmsCheckMessageStatus(uuid string) (string, error) {
+	ts := fmt.Sprintf("ts-%d", time.Now().UnixMilli())
+	sum := md5.Sum([]byte(ts + redsmsClient.apiKey))
+	secret := hex.EncodeToString(sum[:])
+
+	url := fmt.Sprintf("%s/%s", redsmsClient.baseURL, uuid)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("login", redsmsClient.login)
+	req.Header.Set("ts", ts)
+	req.Header.Set("secret", secret)
+
+	resp, err := redsmsClient.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("redsms status check returned status %d", resp.StatusCode)
+	}
+
+	var data struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", err
+	}
+	return data.Status, nil
 }
 
 func redsmsSendWithRoute(to, code, routeOverride string) error {
