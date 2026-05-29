@@ -52,7 +52,7 @@ import (
 
 	// Credential validators
 	_ "github.com/tinode/chat/server/validate/email"
-	_ "github.com/tinode/chat/server/validate/tel"
+	telvalidate "github.com/tinode/chat/server/validate/tel"
 	"google.golang.org/grpc"
 
 	// File upload handlers
@@ -329,6 +329,8 @@ type configType struct {
 	AccountGC *accountGcConfig            `json:"acc_gc_config"`
 	Media     *mediaConfig                `json:"media"`
 	WebRTC    json.RawMessage             `json:"webrtc"`
+	// REDSMS config for phone preverify (wait call)
+	PhonePreverifyRedsmsConf json.RawMessage `json:"phone_preverify_redsms_conf"`
 }
 
 func main() {
@@ -521,6 +523,13 @@ func main() {
 		globals.validators[name] = credValidator{
 			requiredAuthLvl: reqLevels,
 			addToTags:       vconf.AddToTags,
+		}
+	}
+
+	// Initialize REDSMS for phone preverify (wait call).
+	if len(config.PhonePreverifyRedsmsConf) > 0 {
+		if err := telvalidate.InitRedsms(config.PhonePreverifyRedsmsConf); err != nil {
+			logs.Err.Println("Failed to init REDSMS for phone preverify:", err)
 		}
 	}
 
