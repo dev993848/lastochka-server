@@ -148,12 +148,14 @@ func redsmsCheckMessageStatus(uuid string) (string, error) {
 	}
 
 	var data struct {
-		Status string `json:"status"`
+		Item struct {
+			Status string `json:"status"`
+		} `json:"item"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return "", err
 	}
-	return data.Status, nil
+	return data.Item.Status, nil
 }
 
 func redsmsSendWithRoute(to, code, routeOverride string) error {
