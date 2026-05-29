@@ -2,10 +2,8 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -43,7 +41,7 @@ type phonePreverifyConfirmResponse struct {
 type phonePreverifyEntry struct {
 	Credential string
 	Phone      string
-	Code       string
+	UUID       string
 	CreatedAt  time.Time
 	ExpiresAt  time.Time
 }
@@ -56,7 +54,6 @@ var phonePreverifyStore = struct {
 }
 
 const phonePreverifyTTL = 10 * time.Minute
-const phonePreverifyCodeLen = 4
 const phonePreverifySmsFallbackDelay = 60 * time.Second
 
 func handlePhonePreverifyStart(w http.ResponseWriter, r *http.Request) {
@@ -98,23 +95,16 @@ func handlePhonePreverifyStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	code, err := randomNumericCode(phonePreverifyCodeLen)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to generate verification code"})
-		return
-	}
-
 	if !telvalidate.IsRedsmsConfigured() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "redsms wait-call is not configured"})
 		return
 	}
 
-	callNumber, err := telvalidate.SendWaitCall(cred, code)
+	callNumber, msgUUID, err := telvalidate.SendWaitCallNoCode(cred)
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to send wait-call"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to send wait-call: " + err.Error()})
 		return
 	}
 
@@ -136,7 +126,7 @@ func handlePhonePreverifyStart(w http.ResponseWriter, r *http.Request) {
 	phonePreverifyStore.entries[verificationID] = phonePreverifyEntry{
 		Credential: "tel:" + cred,
 		Phone:      cred,
-		Code:       code,
+		UUID:       msgUUID,
 		CreatedAt:  now,
 		ExpiresAt:  expiresAt,
 	}
@@ -187,10 +177,28 @@ func handlePhonePreverifyConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	code := strings.TrimSpace(req.Code)
-	if subtle.ConstantTimeCompare([]byte(code), []byte(entry.Code)) != 1 {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid verification code"})
+	// Wait call without code: poll REDSMS status
+	var status string
+	var pollErr error
+	for i := 0; i < 5; i++ {
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		status, pollErr = telvalidate.CheckWaitCallStatus(entry.UUID)
+		if pollErr != nil {
+			continue
+		}
+		if status == "wcall_delivered" || status == "delivered" {
+			break
+		}
+	}
+	if status != "wcall_delivered" && status != "delivered" {
+		w.WriteHeader(http.StatusBadRequest)
+		msg := "звонок не обнаружен. убедитесь, что вы позвонили с номера " + entry.Phone
+		if pollErr != nil {
+			msg = "ошибка проверки статуса звонка"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 		return
 	}
 
@@ -211,20 +219,4 @@ func randomHex(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
-}
-
-func randomNumericCode(length int) (string, error) {
-	if length <= 0 {
-		return "", fmt.Errorf("invalid code length")
-	}
-	max := byte(10)
-	out := make([]byte, length)
-	buf := make([]byte, length)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	for i := 0; i < length; i++ {
-		out[i] = '0' + (buf[i] % max)
-	}
-	return string(out), nil
 }
