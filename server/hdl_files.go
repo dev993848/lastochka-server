@@ -138,6 +138,7 @@ func largeFileServeHTTP(wrt http.ResponseWriter, req *http.Request) {
 
 	fd, rsc, err := mh.Download(req.URL.String())
 	if err != nil {
+		logs.Warn.Println("media serve: download failed for", req.URL.String(), "err:", err)
 		writeHttpResponse(decodeStoreError(err, "", now, nil), err)
 		return
 	}

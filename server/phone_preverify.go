@@ -4,11 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/tinode/chat/server/logs"
 	"github.com/tinode/chat/server/store"
 	telvalidate "github.com/tinode/chat/server/validate/tel"
 )
@@ -42,6 +45,7 @@ type phonePreverifyEntry struct {
 	Credential string
 	Phone      string
 	UUID       string
+	SmsCode    string
 	CreatedAt  time.Time
 	ExpiresAt  time.Time
 }
@@ -146,8 +150,50 @@ func handlePhonePreverifyResendSms(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
 		return
 	}
-	w.WriteHeader(http.StatusGone)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "sms fallback is disabled; use wait-call flow"})
+
+	var req phonePreverifyResendSmsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	phonePreverifyStore.mu.Lock()
+	entry, ok := phonePreverifyStore.entries[req.VerificationID]
+	if ok && entry.ExpiresAt.Before(time.Now()) {
+		delete(phonePreverifyStore.entries, req.VerificationID)
+		ok = false
+	}
+	if ok {
+		code, err := generateSmsCode()
+		if err != nil {
+			phonePreverifyStore.mu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to generate code"})
+			return
+		}
+		entry.SmsCode = code
+		phonePreverifyStore.entries[req.VerificationID] = entry
+	}
+	phonePreverifyStore.mu.Unlock()
+
+	if !ok {
+		w.WriteHeader(http.StatusGone)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "verification session expired"})
+		return
+	}
+
+	smsText := "Ласточка: ваш код подтверждения — " + entry.SmsCode
+	if err := telvalidate.SendSmsCode(entry.Phone, smsText); err != nil {
+		logs.Warn.Println("phone preverify: SMS send error:", err)
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to send SMS"})
+		return
+	}
+
+	logs.Info.Println("phone preverify: SMS code sent, phone:", entry.Phone)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 }
 
 func handlePhonePreverifyConfirm(w http.ResponseWriter, r *http.Request) {
@@ -177,30 +223,63 @@ func handlePhonePreverifyConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Code != "" {
+		if entry.SmsCode == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "sms code was not requested"})
+			return
+		}
+		if req.Code != entry.SmsCode {
+			logs.Warn.Println("phone preverify: wrong SMS code, phone:", entry.Phone)
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "неверный код"})
+			return
+		}
+		logs.Info.Println("phone preverify: verified via SMS code, phone:", entry.Phone)
+
+		phonePreverifyStore.mu.Lock()
+		delete(phonePreverifyStore.entries, req.VerificationID)
+		phonePreverifyStore.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(phonePreverifyConfirmResponse{
+			Verified: true,
+			Phone:    entry.Phone,
+		})
+		return
+	}
+
 	// Wait call without code: poll REDSMS status
 	var status string
 	var pollErr error
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 8; i++ {
 		if i > 0 {
 			time.Sleep(2 * time.Second)
 		}
 		status, pollErr = telvalidate.CheckWaitCallStatus(entry.UUID)
 		if pollErr != nil {
+			logs.Warn.Println("phone preverify: REDSMS poll error:", pollErr)
 			continue
 		}
-		if status == "wcall_delivered" || status == "delivered" {
+		logs.Info.Println("phone preverify: REDSMS status:", status, "uuid:", entry.UUID)
+		if status == "wcall_delivered" {
+			break
+		}
+		if status == "timeout" || status == "undelivered" || status == "error" {
 			break
 		}
 	}
-	if status != "wcall_delivered" && status != "delivered" {
+	if status != "wcall_delivered" {
 		w.WriteHeader(http.StatusBadRequest)
 		msg := "звонок не обнаружен. убедитесь, что вы позвонили с номера " + entry.Phone
 		if pollErr != nil {
 			msg = "ошибка проверки статуса звонка"
 		}
+		logs.Warn.Println("phone preverify: FAILED status:", status, "phone:", entry.Phone)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 		return
 	}
+	logs.Info.Println("phone preverify: verified, phone:", entry.Phone)
 
 	phonePreverifyStore.mu.Lock()
 	delete(phonePreverifyStore.entries, req.VerificationID)
@@ -219,4 +298,12 @@ func randomHex(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func generateSmsCode() (string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(10000))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%04d", n.Int64()), nil
 }

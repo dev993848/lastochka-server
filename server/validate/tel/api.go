@@ -24,3 +24,7 @@ func SendWaitCallNoCode(to string) (string, string, error) {
 func CheckWaitCallStatus(uuid string) (string, error) {
 	return redsmsCheckMessageStatus(uuid)
 }
+
+func SendSmsCode(to, text string) error {
+	return redsmsSendWithRoute(to, text, "sms")
+}
