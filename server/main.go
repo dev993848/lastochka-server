@@ -226,6 +226,10 @@ type validatorConfig struct {
 	Config json.RawMessage `json:"config"`
 }
 
+type telValidatorBootstrapConfig struct {
+	RedsmsConf json.RawMessage `json:"redsms_conf"`
+}
+
 // Stale unvalidated user account GC config.
 type accountGcConfig struct {
 	Enabled bool `json:"enabled"`
@@ -331,6 +335,25 @@ type configType struct {
 	WebRTC    json.RawMessage             `json:"webrtc"`
 	// REDSMS config for phone preverify (wait call)
 	PhonePreverifyRedsmsConf json.RawMessage `json:"phone_preverify_redsms_conf"`
+}
+
+func resolvePhonePreverifyRedsmsConf(config configType) json.RawMessage {
+	if len(config.PhonePreverifyRedsmsConf) > 0 {
+		return config.PhonePreverifyRedsmsConf
+	}
+
+	telConfig, ok := config.Validator["tel"]
+	if !ok || telConfig == nil || len(telConfig.Config) == 0 {
+		return nil
+	}
+
+	var telBootstrap telValidatorBootstrapConfig
+	if err := json.Unmarshal(telConfig.Config, &telBootstrap); err != nil {
+		logs.Warn.Println("Failed to parse tel validator config for phone preverify REDSMS bootstrap:", err)
+		return nil
+	}
+
+	return telBootstrap.RedsmsConf
 }
 
 func main() {
@@ -484,6 +507,7 @@ func main() {
 	}
 
 	// Process validators.
+	phonePreverifyRedsmsConf := resolvePhonePreverifyRedsmsConf(config)
 	for name, vconf := range config.Validator {
 		// Check if validator is restrictive. If so, add validator name to the list of restricted tags.
 		// The namespace can be restricted even if the validator is disabled.
@@ -494,7 +518,8 @@ func main() {
 			globals.immutableTagNS[name] = true
 		}
 
-		if len(vconf.Required) == 0 {
+		needsPhonePreverifyInit := name == "tel" && len(phonePreverifyRedsmsConf) > 0
+		if len(vconf.Required) == 0 && !needsPhonePreverifyInit {
 			// Skip disabled validator.
 			continue
 		}
@@ -527,8 +552,8 @@ func main() {
 	}
 
 	// Initialize REDSMS for phone preverify (wait call).
-	if len(config.PhonePreverifyRedsmsConf) > 0 {
-		if err := telvalidate.InitRedsms(config.PhonePreverifyRedsmsConf); err != nil {
+	if len(phonePreverifyRedsmsConf) > 0 {
+		if err := telvalidate.InitRedsms(phonePreverifyRedsmsConf); err != nil {
 			logs.Err.Println("Failed to init REDSMS for phone preverify:", err)
 		}
 	}

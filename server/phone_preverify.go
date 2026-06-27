@@ -165,6 +165,20 @@ func handlePhonePreverifyResendSms(w http.ResponseWriter, r *http.Request) {
 		ok = false
 	}
 	if ok {
+		availableAt := entry.CreatedAt.Add(phonePreverifySmsFallbackDelay)
+		if time.Now().Before(availableAt) {
+			remaining := time.Until(availableAt)
+			retryAfterSeconds := int((remaining + time.Second - 1) / time.Second)
+			phonePreverifyStore.mu.Unlock()
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":               "sms fallback is not available yet",
+				"retry_after_seconds": retryAfterSeconds,
+			})
+			return
+		}
+	}
+	if ok {
 		code, err := generateSmsCode()
 		if err != nil {
 			phonePreverifyStore.mu.Unlock()
