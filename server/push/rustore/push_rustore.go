@@ -153,6 +153,20 @@ type deviceRequest struct {
 	req  pushRequest
 }
 
+func (c *configType) getField(what, field string) string {
+	if c.Android != nil {
+		return c.Android.GetStringField(what, field)
+	}
+	return ""
+}
+
+func defaultField(val, def string) string {
+	if val != "" {
+		return val
+	}
+	return def
+}
+
 func (h *Handler) sendPush(rcpt *push.Receipt) {
 	uids := make([]types.Uid, 0, len(rcpt.To))
 	for uid := range rcpt.To {
@@ -175,15 +189,8 @@ func (h *Handler) sendPush(rcpt *push.Receipt) {
 				continue
 			}
 
-			title := h.config.GetStringField(rcpt.Payload.What, "Title")
-			if title == "" {
-				title = "Ласточка"
-			}
-
-			body := h.config.GetStringField(rcpt.Payload.What, "Body")
-			if body == "" {
-				body = "Новое сообщение"
-			}
+			title := defaultField(h.config.getField(rcpt.Payload.What, "Title"), "Ласточка")
+			body := defaultField(h.config.getField(rcpt.Payload.What, "Body"), "Новое сообщение")
 
 			if rcpt.Payload.What == push.ActMsg && rcpt.Payload.Content != nil {
 				if contentStr, ok := rcpt.Payload.Content.(string); ok && contentStr != "" {
@@ -214,10 +221,10 @@ func (h *Handler) sendPush(rcpt *push.Receipt) {
 					Notification: &pushNotification{
 						Title:       title,
 						Body:        body,
-						ClickAction: h.config.GetStringField(rcpt.Payload.What, "ClickAction"),
-						Icon:        h.config.GetStringField(rcpt.Payload.What, "Icon"),
-						Color:       h.config.GetStringField(rcpt.Payload.What, "Color"),
-						Sound:       h.config.GetStringField(rcpt.Payload.What, "Sound"),
+						ClickAction: defaultField(h.config.getField(rcpt.Payload.What, "ClickAction"), ""),
+						Icon:        defaultField(h.config.getField(rcpt.Payload.What, "Icon"), ""),
+						Color:       defaultField(h.config.getField(rcpt.Payload.What, "Color"), ""),
+						Sound:       defaultField(h.config.getField(rcpt.Payload.What, "Sound"), ""),
 					},
 					Data: data,
 				},
