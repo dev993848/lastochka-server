@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tinode/chat/server/drafty"
 	"github.com/tinode/chat/server/logs"
 	"github.com/tinode/chat/server/push"
 	"github.com/tinode/chat/server/push/common"
@@ -34,21 +35,21 @@ const (
 )
 
 type Handler struct {
-	input  chan *push.Receipt
-	stop   chan bool
-	apiKey string
+	input     chan *push.Receipt
+	stop      chan bool
+	apiKey    string
 	projectID string
-	client *http.Client
-	config *configType
+	client    *http.Client
+	config    *configType
 }
 
 type configType struct {
-	Enabled     bool           `json:"enabled"`
-	ProjectID   string         `json:"project_id"`
-	APIKey      string         `json:"api_key"`
-	APIKeyFile  string         `json:"api_key_file"`
-	BaseURL     string         `json:"base_url,omitempty"`
-	Android     *common.Config `json:"android,omitempty"`
+	Enabled    bool           `json:"enabled"`
+	ProjectID  string         `json:"project_id"`
+	APIKey     string         `json:"api_key"`
+	APIKeyFile string         `json:"api_key_file"`
+	BaseURL    string         `json:"base_url,omitempty"`
+	Android    *common.Config `json:"android,omitempty"`
 }
 
 type pushRequest struct {
@@ -59,8 +60,8 @@ type pushRequest struct {
 }
 
 type pushNotification struct {
-	Title   string `json:"title,omitempty"`
-	Body    string `json:"body,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Body        string `json:"body,omitempty"`
 	ClickAction string `json:"click_action,omitempty"`
 	Icon        string `json:"icon,omitempty"`
 	Color       string `json:"color,omitempty"`
@@ -149,8 +150,8 @@ func (Handler) Stop() {
 }
 
 type deviceRequest struct {
-	uid  types.Uid
-	req  pushRequest
+	uid types.Uid
+	req pushRequest
 }
 
 func (c *configType) getField(what, field string) string {
@@ -165,6 +166,58 @@ func defaultField(val, def string) string {
 		return val
 	}
 	return def
+}
+
+func titleFromPublic(public any) string {
+	pub, ok := public.(map[string]any)
+	if !ok || pub == nil {
+		return ""
+	}
+	if fn, _ := pub["fn"].(string); strings.TrimSpace(fn) != "" {
+		return strings.TrimSpace(fn)
+	}
+	if uname, _ := pub["uname"].(string); strings.TrimSpace(uname) != "" {
+		return strings.TrimSpace(uname)
+	}
+	return ""
+}
+
+func resolveTopicTitle(topic string, cache map[string]string) string {
+	if title, ok := cache[topic]; ok {
+		return title
+	}
+
+	var title string
+	switch types.GetTopicCat(topic) {
+	case types.TopicCatP2P:
+		user, err := store.Users.Get(types.ParseUserId(topic))
+		if err == nil && user != nil {
+			title = titleFromPublic(user.Public)
+		}
+	case types.TopicCatGrp:
+		stopic, err := store.Topics.Get(topic)
+		if err == nil && stopic != nil {
+			title = titleFromPublic(stopic.Public)
+		}
+	}
+
+	cache[topic] = title
+	return title
+}
+
+func payloadPreview(pl push.Payload) string {
+	content, err := drafty.PlainText(pl.Content)
+	if err != nil {
+		return ""
+	}
+	content = strings.TrimSpace(content)
+	if len(content) > push.MaxPayloadLength {
+		runes := []rune(content)
+		if len(runes) > push.MaxPayloadLength {
+			content = string(runes[:push.MaxPayloadLength]) + "…"
+		}
+	}
+	return content
 }
 
 func (h *Handler) sendPush(rcpt *push.Receipt) {
@@ -182,35 +235,44 @@ func (h *Handler) sendPush(rcpt *push.Receipt) {
 		return
 	}
 
+	isSilent := rcpt.Payload.Silent
+	titleCache := make(map[string]string)
+
 	for uid, devList := range devices {
 		recipient := rcpt.To[uid]
+		topic := rcpt.Payload.Topic
+		if types.GetTopicCat(topic) == types.TopicCatP2P {
+			rewritten, err := types.P2PNameForUser(uid, topic)
+			if err == nil {
+				topic = rewritten
+			}
+		}
+		title := resolveTopicTitle(topic, titleCache)
 		for _, dev := range devList {
 			if dev.DeviceId == "" {
 				continue
 			}
-
-			title := defaultField(h.config.getField(rcpt.Payload.What, "Title"), "Ласточка")
-			body := defaultField(h.config.getField(rcpt.Payload.What, "Body"), "Новое сообщение")
-
-			if rcpt.Payload.What == push.ActMsg && rcpt.Payload.Content != nil {
-				if contentStr, ok := rcpt.Payload.Content.(string); ok && contentStr != "" {
-					body = contentStr
-				}
+			if dev.Platform != "android-rustore" {
+				continue
 			}
 
 			data := map[string]string{
-				"topic":  rcpt.Payload.Topic,
+				"topic":  topic,
 				"what":   rcpt.Payload.What,
-				"silent": fmt.Sprintf("%v", rcpt.Payload.Silent),
+				"silent": fmt.Sprintf("%v", isSilent),
+				"from":   rcpt.Payload.From,
+				"unread": fmt.Sprintf("%d", recipient.Unread),
+			}
+			if title != "" {
+				data["title"] = title
 			}
 			if rcpt.Payload.SeqId > 0 {
 				data["seq"] = fmt.Sprintf("%d", rcpt.Payload.SeqId)
 			}
-			if rcpt.Payload.From != "" {
-				data["from"] = rcpt.Payload.From
-			}
-			if recipient.Unread > 0 {
-				data["unread"] = fmt.Sprintf("%d", recipient.Unread)
+			if rcpt.Payload.What == push.ActMsg {
+				if preview := payloadPreview(rcpt.Payload); preview != "" {
+					data["content"] = preview
+				}
 			}
 
 			dr := deviceRequest{
@@ -218,16 +280,31 @@ func (h *Handler) sendPush(rcpt *push.Receipt) {
 				req: pushRequest{
 					Token:     dev.DeviceId,
 					ProjectID: h.projectID,
-					Notification: &pushNotification{
-						Title:       title,
-						Body:        body,
-						ClickAction: defaultField(h.config.getField(rcpt.Payload.What, "ClickAction"), ""),
-						Icon:        defaultField(h.config.getField(rcpt.Payload.What, "Icon"), ""),
-						Color:       defaultField(h.config.getField(rcpt.Payload.What, "Color"), ""),
-						Sound:       defaultField(h.config.getField(rcpt.Payload.What, "Sound"), ""),
-					},
-					Data: data,
+					Data:      data,
 				},
+			}
+
+			if !isSilent {
+				title := title
+				if title == "" {
+					title = defaultField(h.config.getField(rcpt.Payload.What, "Title"), "Ласточка")
+				}
+				body := defaultField(h.config.getField(rcpt.Payload.What, "Body"), "Новое сообщение")
+
+				if rcpt.Payload.What == push.ActMsg {
+					if preview := payloadPreview(rcpt.Payload); preview != "" {
+						body = preview
+					}
+				}
+
+				dr.req.Notification = &pushNotification{
+					Title:       title,
+					Body:        body,
+					ClickAction: defaultField(h.config.getField(rcpt.Payload.What, "ClickAction"), ""),
+					Icon:        defaultField(h.config.getField(rcpt.Payload.What, "Icon"), ""),
+					Color:       defaultField(h.config.getField(rcpt.Payload.What, "Color"), ""),
+					Sound:       defaultField(h.config.getField(rcpt.Payload.What, "Sound"), ""),
+				}
 			}
 
 			if err := h.sendRequest(&dr); err != nil {

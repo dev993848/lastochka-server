@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	fcmv1 "google.golang.org/api/fcm/v1"
@@ -95,6 +96,43 @@ func clonePayload(src map[string]string) map[string]string {
 	return dst
 }
 
+func titleFromPublic(public any) string {
+	pub, ok := public.(map[string]any)
+	if !ok || pub == nil {
+		return ""
+	}
+	if fn, _ := pub["fn"].(string); strings.TrimSpace(fn) != "" {
+		return strings.TrimSpace(fn)
+	}
+	if uname, _ := pub["uname"].(string); strings.TrimSpace(uname) != "" {
+		return strings.TrimSpace(uname)
+	}
+	return ""
+}
+
+func resolveTopicTitle(topic string, cache map[string]string) string {
+	if title, ok := cache[topic]; ok {
+		return title
+	}
+
+	var title string
+	switch t.GetTopicCat(topic) {
+	case t.TopicCatP2P:
+		user, err := store.Users.Get(t.ParseUserId(topic))
+		if err == nil && user != nil {
+			title = titleFromPublic(user.Public)
+		}
+	case t.TopicCatGrp:
+		stopic, err := store.Topics.Get(topic)
+		if err == nil && stopic != nil {
+			title = titleFromPublic(stopic.Public)
+		}
+	}
+
+	cache[topic] = title
+	return title
+}
+
 // PrepareV1Notifications creates notification payloads ready to be posted
 // to push notification server for the provided receipt.
 func PrepareV1Notifications(rcpt *push.Receipt, config *configType) ([]*fcmv1.Message, []t.Uid) {
@@ -140,12 +178,15 @@ func PrepareV1Notifications(rcpt *push.Receipt, config *configType) ([]*fcmv1.Me
 
 	var messages []*fcmv1.Message
 	var uids []t.Uid
+	titleCache := make(map[string]string)
 	for uid, devList := range devices {
 		topic := rcpt.Payload.Topic
 		userData := data
+		userDataCloned := false
 		tcat := t.GetTopicCat(topic)
 		if rcpt.To[uid].Delivered > 0 || tcat == t.TopicCatP2P {
 			userData = clonePayload(data)
+			userDataCloned = true
 			// Fix topic name for P2P pushes.
 			if tcat == t.TopicCatP2P {
 				topic, _ = t.P2PNameForUser(uid, topic)
@@ -155,6 +196,13 @@ func PrepareV1Notifications(rcpt *push.Receipt, config *configType) ([]*fcmv1.Me
 			if rcpt.To[uid].Delivered > 0 {
 				userData["silent"] = "true"
 			}
+		}
+		if title := resolveTopicTitle(topic, titleCache); title != "" {
+			if !userDataCloned {
+				userData = clonePayload(data)
+				userDataCloned = true
+			}
+			userData["title"] = title
 		}
 
 		for i := range devList {
@@ -168,6 +216,8 @@ func PrepareV1Notifications(rcpt *push.Receipt, config *configType) ([]*fcmv1.Me
 				switch d.Platform {
 				case "android":
 					msg.Android = androidNotificationConfig(rcpt.Payload.What, topic, userData, config)
+				case "android-rustore":
+					continue
 				case "ios":
 					msg.Apns = apnsNotificationConfig(rcpt.Payload.What, topic, userData, rcpt.To[uid].Unread, config)
 				case "web":
@@ -190,6 +240,9 @@ func PrepareV1Notifications(rcpt *push.Receipt, config *configType) ([]*fcmv1.Me
 		topic := rcpt.Channel
 		userData := clonePayload(data)
 		userData["topic"] = topic
+		if title := resolveTopicTitle(topic, titleCache); title != "" {
+			userData["title"] = title
+		}
 		// Channel receiver should not know the ID of the message sender.
 		delete(userData, "xfrom")
 		msg := fcmv1.Message{
@@ -238,13 +291,13 @@ func ChannelsForUser(uid t.Uid) []string {
 	return channels
 }
 
-func androidNotificationConfig(what, topic string, data map[string]string, config *configType) *fcmv1.AndroidConfig {
+func androidNotificationConfig(what, _ string, data map[string]string, config *configType) *fcmv1.AndroidConfig {
 	timeToLive := strconv.Itoa(defaultTimeToLive) + "s"
 	if config != nil && config.TimeToLive > 0 {
 		timeToLive = strconv.Itoa(config.TimeToLive) + "s"
 	}
 
-	if what == push.ActRead {
+	if what == push.ActRead || data["silent"] == "true" {
 		return &fcmv1.AndroidConfig{
 			Priority:     string(common.AndroidPriorityNormal),
 			Notification: nil,
@@ -259,45 +312,10 @@ func androidNotificationConfig(what, topic string, data map[string]string, confi
 
 	// Sending priority.
 	priority := string(common.AndroidPriorityHigh)
-	ac := &fcmv1.AndroidConfig{
+	return &fcmv1.AndroidConfig{
 		Priority: priority,
 		Ttl:      timeToLive,
 	}
-
-	// When this notification type is included and the app is not in the foreground
-	// Android won't wake up the app and won't call FirebaseMessagingService:onMessageReceived.
-	// See dicussion: https://github.com/firebase/quickstart-js/issues/71
-	if config.Android == nil || !config.Android.Enabled {
-		return ac
-	}
-
-	body := config.Android.GetStringField(what, "Body")
-	if body == "$content" {
-		body = data["content"]
-	}
-
-	// Client-side display priority.
-	priority = string(common.AndroidNotificationPriorityHigh)
-	if videoCall {
-		priority = string(common.AndroidNotificationPriorityMax)
-	}
-
-	ac.Notification = &fcmv1.AndroidNotification{
-		// Android uses Tag value to group notifications together:
-		// show just one notification per topic.
-		Tag:                  topic,
-		NotificationPriority: priority,
-		Visibility:           string(common.AndroidVisibilityPrivate),
-		TitleLocKey:          config.Android.GetStringField(what, "TitleLocKey"),
-		Title:                config.Android.GetStringField(what, "Title"),
-		BodyLocKey:           config.Android.GetStringField(what, "BodyLocKey"),
-		Body:                 body,
-		Icon:                 config.Android.GetStringField(what, "Icon"),
-		Color:                config.Android.GetStringField(what, "Color"),
-		ClickAction:          config.Android.GetStringField(what, "ClickAction"),
-	}
-
-	return ac
 }
 
 func apnsShouldPresentAlert(what, callStatus, isSilent string, config *configType) bool {
