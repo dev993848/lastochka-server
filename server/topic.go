@@ -2275,8 +2275,10 @@ func (t *Topic) replySetDesc(sess *Session, asUid types.Uid, asChan bool,
 			err = assignAccess(core, set.Desc.DefaultAcs)
 			sendCommon = assignGenericValues(core, "Public", t.public, set.Desc.Public)
 			sendCommon = assignGenericValues(core, "Trusted", t.trusted, set.Desc.Trusted) || sendCommon
-			if public, ok := core["Public"]; ok {
-				newPublicAddress = extractPublicAddress(public)
+			// Compress inline base64 avatars to prevent large blobs in DB
+			if public, ok := core["Public"].(map[string]any); ok {
+				core["Public"] = processAvatarPhoto(public)
+				newPublicAddress = extractPublicAddress(core["Public"])
 			}
 		case types.TopicCatFnd:
 			// set.Desc.DefaultAcs is ignored.
@@ -2299,6 +2301,10 @@ func (t *Topic) replySetDesc(sess *Session, asUid types.Uid, asChan bool,
 				err = assignAccess(core, set.Desc.DefaultAcs)
 				sendCommon = assignGenericValues(core, "Public", t.public, set.Desc.Public)
 				sendCommon = assignGenericValues(core, "Trusted", t.trusted, set.Desc.Trusted) || sendCommon
+				// Compress inline base64 avatars in group topics too
+				if public, ok := core["Public"].(map[string]any); ok {
+					core["Public"] = processAvatarPhoto(public)
+				}
 			} else if set.Desc.DefaultAcs != nil || set.Desc.Public != nil || set.Desc.Trusted != nil {
 				// This is a request from non-owner
 				sess.queueOut(ErrPermissionDeniedReply(msg, now))
