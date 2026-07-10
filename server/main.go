@@ -822,6 +822,8 @@ func main() {
 	mux.HandleFunc(config.ApiPath+"v1/auth/phone/preverify/confirm", handlePhonePreverifyConfirm)
 	// Handle legacy account migration endpoint (no auth required)
 	mux.HandleFunc(config.ApiPath+"v1/legacy/migrate-phone", handleLegacyPhoneMigration)
+	mux.HandleFunc(config.ApiPath+"v1/notification-sources", handleNotificationSources)
+	mux.HandleFunc(config.ApiPath+"v1/notification-sources/", handleNotificationSourceByID)
 
 	if config.Media != nil {
 		// Handle uploads of large files.
