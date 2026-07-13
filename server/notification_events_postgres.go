@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,6 +64,7 @@ func createNotificationEvent(userID string, source notificationSource, title str
 		Body:       body,
 		Payload:    payload,
 	}
+	var readAt sql.NullTime
 
 	err = db.QueryRow(
 		context.Background(),
@@ -76,10 +78,11 @@ func createNotificationEvent(userID string, source notificationSource, title str
 		item.Title,
 		item.Body,
 		[]byte(item.Payload),
-	).Scan(&item.CreatedAt, &item.ReadAt)
+	).Scan(&item.CreatedAt, &readAt)
 	if err != nil {
 		return notificationEvent{}, err
 	}
+	item.ReadAt = nullableTimePtr(readAt)
 
 	return item, nil
 }
@@ -118,10 +121,12 @@ func listNotificationEvents(userID string, limit int, unreadOnly bool) ([]notifi
 	for rows.Next() {
 		var item notificationEvent
 		var payload []byte
-		if err := rows.Scan(&item.ID, &item.SourceID, &item.SourceName, &item.Title, &item.Body, &payload, &item.CreatedAt, &item.ReadAt); err != nil {
+		var readAt sql.NullTime
+		if err := rows.Scan(&item.ID, &item.SourceID, &item.SourceName, &item.Title, &item.Body, &payload, &item.CreatedAt, &readAt); err != nil {
 			return nil, 0, err
 		}
 		item.Payload = json.RawMessage(payload)
+		item.ReadAt = nullableTimePtr(readAt)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -139,6 +144,7 @@ func markNotificationEventRead(userID, id string) (notificationEvent, error) {
 
 	var item notificationEvent
 	var payload []byte
+	var readAt sql.NullTime
 	err := db.QueryRow(
 		context.Background(),
 		`UPDATE notification_events
@@ -147,11 +153,12 @@ func markNotificationEventRead(userID, id string) (notificationEvent, error) {
 		 RETURNING id, source_id, source_name, title, body, payload, created_at, read_at`,
 		userID,
 		id,
-	).Scan(&item.ID, &item.SourceID, &item.SourceName, &item.Title, &item.Body, &payload, &item.CreatedAt, &item.ReadAt)
+	).Scan(&item.ID, &item.SourceID, &item.SourceName, &item.Title, &item.Body, &payload, &item.CreatedAt, &readAt)
 	if err != nil {
 		return notificationEvent{}, errNotificationEventNotFound
 	}
 	item.Payload = json.RawMessage(payload)
+	item.ReadAt = nullableTimePtr(readAt)
 	return item, nil
 }
 
