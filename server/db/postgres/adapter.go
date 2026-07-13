@@ -169,6 +169,7 @@ func (a *adapter) Open(jsonconfig json.RawMessage) error {
 	}
 
 	if err == nil {
+		currentAdapter = a
 		if config.MaxOpenConns > 0 {
 			a.poolConfig.MaxConns = int32(config.MaxOpenConns)
 		}
@@ -192,6 +193,9 @@ func (a *adapter) Close() error {
 	if a.db != nil {
 		a.db.Close()
 		a.db = nil
+		if currentAdapter == a {
+			currentAdapter = nil
+		}
 		a.version = -1
 	}
 	return nil

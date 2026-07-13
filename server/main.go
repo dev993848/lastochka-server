@@ -472,6 +472,12 @@ func main() {
 		logs.Info.Println("Closed database connection(s)")
 		logs.Info.Println("All done, good bye")
 	}()
+	if err = ensureNotificationSourcesStorage(); err != nil {
+		logs.Err.Fatal("Failed to initialize notification sources storage: ", err)
+	}
+	if err = ensureNotificationEventsStorage(); err != nil {
+		logs.Err.Fatal("Failed to initialize notification events storage: ", err)
+	}
 	statsRegisterDbStats()
 
 	// API key signing secret
@@ -823,7 +829,10 @@ func main() {
 	// Handle legacy account migration endpoint (no auth required)
 	mux.HandleFunc(config.ApiPath+"v1/legacy/migrate-phone", handleLegacyPhoneMigration)
 	mux.HandleFunc(config.ApiPath+"v1/notification-sources", handleNotificationSources)
+	mux.HandleFunc(config.ApiPath+"v1/notification-sources/ingress", handleNotificationIngress)
 	mux.HandleFunc(config.ApiPath+"v1/notification-sources/", handleNotificationSourceByID)
+	mux.HandleFunc(config.ApiPath+"v1/notifications", handleNotifications)
+	mux.HandleFunc(config.ApiPath+"v1/notifications/", handleNotificationByID)
 	mux.HandleFunc(config.ApiPath+"v1/notes", handleNotes)
 	mux.HandleFunc(config.ApiPath+"v1/notes/", handleNoteByID)
 
