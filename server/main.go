@@ -824,6 +824,8 @@ func main() {
 	mux.HandleFunc(config.ApiPath+"v1/legacy/migrate-phone", handleLegacyPhoneMigration)
 	mux.HandleFunc(config.ApiPath+"v1/notification-sources", handleNotificationSources)
 	mux.HandleFunc(config.ApiPath+"v1/notification-sources/", handleNotificationSourceByID)
+	mux.HandleFunc(config.ApiPath+"v1/notes", handleNotes)
+	mux.HandleFunc(config.ApiPath+"v1/notes/", handleNoteByID)
 
 	if config.Media != nil {
 		// Handle uploads of large files.
