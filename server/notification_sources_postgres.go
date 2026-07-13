@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -63,9 +64,11 @@ func listNotificationSourcesByUser(userID string) ([]notificationSourceListItem,
 	items := make([]notificationSourceListItem, 0)
 	for rows.Next() {
 		var item notificationSourceListItem
-		if err := rows.Scan(&item.ID, &item.Name, &item.TopicName, &item.Enabled, &item.CreatedAt, &item.UpdatedAt, &item.LastUsedAt); err != nil {
+		var lastUsedAt sql.NullTime
+		if err := rows.Scan(&item.ID, &item.Name, &item.TopicName, &item.Enabled, &item.CreatedAt, &item.UpdatedAt, &lastUsedAt); err != nil {
 			return nil, err
 		}
+		item.LastUsedAt = nullableTimePtr(lastUsedAt)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -91,15 +94,17 @@ func createNotificationSourceRecord(userID string, name string, topicName string
 	}
 
 	item := notificationSource{ID: id, Name: name, TopicName: topicName, Enabled: true, Token: token}
+	var lastUsedAt sql.NullTime
 	err = db.QueryRow(context.Background(), `
 		INSERT INTO notification_sources (id, user_id, name, topic_name, enabled, token)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING created_at, updated_at, last_used_at`,
 		item.ID, userID, item.Name, item.TopicName, item.Enabled, item.Token,
-	).Scan(&item.CreatedAt, &item.UpdatedAt, &item.LastUsedAt)
+	).Scan(&item.CreatedAt, &item.UpdatedAt, &lastUsedAt)
 	if err != nil {
 		return notificationSource{}, err
 	}
+	item.LastUsedAt = nullableTimePtr(lastUsedAt)
 
 	return item, nil
 }
@@ -112,14 +117,16 @@ func updateNotificationSourceRecord(userID, id string, req updateNotificationSou
 
 	ctx := context.Background()
 	var current notificationSource
+	var lastUsedAt sql.NullTime
 	err := db.QueryRow(ctx, `
 		SELECT id, name, topic_name, enabled, token, created_at, updated_at, last_used_at
 		FROM notification_sources
 		WHERE user_id = $1 AND id = $2`, userID, id,
-	).Scan(&current.ID, &current.Name, &current.TopicName, &current.Enabled, &current.Token, &current.CreatedAt, &current.UpdatedAt, &current.LastUsedAt)
+	).Scan(&current.ID, &current.Name, &current.TopicName, &current.Enabled, &current.Token, &current.CreatedAt, &current.UpdatedAt, &lastUsedAt)
 	if err != nil {
 		return notificationSourceListItem{}, errNotificationSourceNotFound
 	}
+	current.LastUsedAt = nullableTimePtr(lastUsedAt)
 
 	if req.Name != nil {
 		current.Name = *req.Name
@@ -129,16 +136,18 @@ func updateNotificationSourceRecord(userID, id string, req updateNotificationSou
 	}
 
 	current.UpdatedAt = time.Now().UTC()
+	lastUsedAt = sql.NullTime{}
 	err = db.QueryRow(ctx, `
 		UPDATE notification_sources
 		SET name = $3, enabled = $4, updated_at = $5
 		WHERE user_id = $1 AND id = $2
 		RETURNING created_at, last_used_at`,
 		userID, id, current.Name, current.Enabled, current.UpdatedAt,
-	).Scan(&current.CreatedAt, &current.LastUsedAt)
+	).Scan(&current.CreatedAt, &lastUsedAt)
 	if err != nil {
 		return notificationSourceListItem{}, err
 	}
+	current.LastUsedAt = nullableTimePtr(lastUsedAt)
 
 	return toNotificationSourceListItem(current), nil
 }
@@ -194,14 +203,16 @@ func findNotificationSourceByToken(token string) (string, notificationSource, bo
 
 	var ownerID string
 	var item notificationSource
+	var lastUsedAt sql.NullTime
 	err := db.QueryRow(context.Background(), `
 		SELECT user_id, id, name, topic_name, enabled, token, created_at, updated_at, last_used_at
 		FROM notification_sources
 		WHERE token = $1`, token,
-	).Scan(&ownerID, &item.ID, &item.Name, &item.TopicName, &item.Enabled, &item.Token, &item.CreatedAt, &item.UpdatedAt, &item.LastUsedAt)
+	).Scan(&ownerID, &item.ID, &item.Name, &item.TopicName, &item.Enabled, &item.Token, &item.CreatedAt, &item.UpdatedAt, &lastUsedAt)
 	if err != nil {
 		return "", notificationSource{}, false, nil
 	}
+	item.LastUsedAt = nullableTimePtr(lastUsedAt)
 
 	return ownerID, item, true, nil
 }
@@ -213,4 +224,12 @@ func touchNotificationSourceLastUsed(id string) error {
 	}
 	_, err := db.Exec(context.Background(), `UPDATE notification_sources SET last_used_at = NOW(), updated_at = NOW() WHERE id = $1`, id)
 	return err
+}
+
+func nullableTimePtr(value sql.NullTime) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Time.UTC()
+	return &result
 }

@@ -12,24 +12,24 @@ import (
 )
 
 type notificationSource struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	TopicName  string    `json:"topic_name"`
-	Enabled    bool      `json:"enabled"`
-	Token      string    `json:"token,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	TopicName  string     `json:"topic_name"`
+	Enabled    bool       `json:"enabled"`
+	Token      string     `json:"token,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
 type notificationSourceListItem struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	TopicName  string    `json:"topic_name"`
-	Enabled    bool      `json:"enabled"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	TopicName  string     `json:"topic_name"`
+	Enabled    bool       `json:"enabled"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
 type notificationSourceStore struct {
