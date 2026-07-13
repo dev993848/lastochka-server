@@ -38,7 +38,7 @@ type updateNoteRequest struct {
 }
 
 func handleNotes(w http.ResponseWriter, r *http.Request) {
-	uid, ok := authenticateAPIRequest(w, r)
+	uid, ok := authenticateUserRequest(w, r)
 	if !ok {
 		return
 	}
@@ -54,7 +54,7 @@ func handleNotes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleNoteByID(w http.ResponseWriter, r *http.Request) {
-	uid, ok := authenticateAPIRequest(w, r)
+	uid, ok := authenticateUserRequest(w, r)
 	if !ok {
 		return
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -55,7 +56,7 @@ type rotateNotificationSourceResponse struct {
 }
 
 func handleNotificationSources(w http.ResponseWriter, r *http.Request) {
-	uid, ok := authenticateAPIRequest(w, r)
+	uid, ok := authenticateUserRequest(w, r)
 	if !ok {
 		return
 	}
@@ -71,7 +72,7 @@ func handleNotificationSources(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleNotificationSourceByID(w http.ResponseWriter, r *http.Request) {
-	uid, ok := authenticateAPIRequest(w, r)
+	uid, ok := authenticateUserRequest(w, r)
 	if !ok {
 		return
 	}
@@ -108,15 +109,10 @@ func handleNotificationSourceByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleNotificationSourcesList(w http.ResponseWriter, uid types.Uid) {
-	userID := uid.UserId()
-
-	notificationSources.mu.RLock()
-	defer notificationSources.mu.RUnlock()
-
-	userItems := notificationSources.items[userID]
-	result := make([]notificationSourceListItem, 0, len(userItems))
-	for _, item := range userItems {
-		result = append(result, toNotificationSourceListItem(item))
+	result, err := listNotificationSourcesByUser(uid.UserId())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	writeJSONStatus(w, http.StatusOK, map[string]any{"items": result})
@@ -141,34 +137,11 @@ func handleNotificationSourcesCreate(w http.ResponseWriter, r *http.Request, uid
 		return
 	}
 
-	id, err := randomHex(8)
+	item, err := createNotificationSourceRecord(uid.UserId(), req.Name, topicName)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to generate source id")
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	token, err := randomHex(16)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to generate source token")
-		return
-	}
-	now := time.Now().UTC()
-	item := notificationSource{
-		ID:        id,
-		Name:      req.Name,
-		TopicName: topicName,
-		Enabled:   true,
-		Token:     token,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	userID := uid.UserId()
-	notificationSources.mu.Lock()
-	if notificationSources.items[userID] == nil {
-		notificationSources.items[userID] = make(map[string]notificationSource)
-	}
-	notificationSources.items[userID][id] = item
-	notificationSources.mu.Unlock()
 
 	writeJSONStatus(w, http.StatusCreated, item)
 }
@@ -180,83 +153,47 @@ func handleNotificationSourcesUpdate(w http.ResponseWriter, r *http.Request, uid
 		return
 	}
 
-	userID := uid.UserId()
-	notificationSources.mu.Lock()
-	defer notificationSources.mu.Unlock()
-
-	item, ok := notificationSources.items[userID][id]
-	if !ok {
+	item, err := updateNotificationSourceRecord(uid.UserId(), id, req)
+	if errors.Is(err, errNotificationSourceNotFound) {
 		writeJSONError(w, http.StatusNotFound, "source not found")
 		return
 	}
-
-	changed := false
-	if req.Name != nil {
-		name := strings.TrimSpace(*req.Name)
-		if name == "" {
-			writeJSONError(w, http.StatusBadRequest, "name must not be empty")
-			return
-		}
-		item.Name = name
-		changed = true
-	}
-	if req.Enabled != nil {
-		item.Enabled = *req.Enabled
-		changed = true
-	}
-	if changed {
-		item.UpdatedAt = time.Now().UTC()
-		notificationSources.items[userID][id] = item
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
-	writeJSONStatus(w, http.StatusOK, toNotificationSourceListItem(item))
+	writeJSONStatus(w, http.StatusOK, item)
 }
 
 func handleNotificationSourcesRotate(w http.ResponseWriter, uid types.Uid, id string) {
-	userID := uid.UserId()
-	newToken, err := randomHex(16)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to generate source token")
-		return
-	}
-
-	notificationSources.mu.Lock()
-	defer notificationSources.mu.Unlock()
-
-	item, ok := notificationSources.items[userID][id]
-	if !ok {
+	newToken, err := rotateNotificationSourceRecord(uid.UserId(), id)
+	if errors.Is(err, errNotificationSourceNotFound) {
 		writeJSONError(w, http.StatusNotFound, "source not found")
 		return
 	}
-	item.Token = newToken
-	item.UpdatedAt = time.Now().UTC()
-	notificationSources.items[userID][id] = item
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	writeJSONStatus(w, http.StatusOK, rotateNotificationSourceResponse{Token: newToken})
 }
 
 func handleNotificationSourcesDelete(w http.ResponseWriter, uid types.Uid, id string) {
-	userID := uid.UserId()
-
-	notificationSources.mu.Lock()
-	defer notificationSources.mu.Unlock()
-
-	if _, ok := notificationSources.items[userID][id]; !ok {
+	if err := deleteNotificationSourceRecord(uid.UserId(), id); errors.Is(err, errNotificationSourceNotFound) {
 		writeJSONError(w, http.StatusNotFound, "source not found")
 		return
+	} else if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	delete(notificationSources.items[userID], id)
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func authenticateAPIRequest(w http.ResponseWriter, r *http.Request) (types.Uid, bool) {
+func authenticateUserRequest(w http.ResponseWriter, r *http.Request) (types.Uid, bool) {
 	w.Header().Set("Content-Type", "application/json")
-
-	if isValid, _ := checkAPIKey(getAPIKey(r)); !isValid {
-		writeJSONError(w, http.StatusUnauthorized, "invalid api key")
-		return types.ZeroUid, false
-	}
 
 	authMethod, secret := getHttpAuth(r)
 	if strings.EqualFold(authMethod, "bearer") {
