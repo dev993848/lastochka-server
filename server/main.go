@@ -478,6 +478,9 @@ func main() {
 	if err = ensureNotificationEventsStorage(); err != nil {
 		logs.Err.Fatal("Failed to initialize notification events storage: ", err)
 	}
+	if err = ensureInvitesStorage(); err != nil {
+		logs.Err.Fatal("Failed to initialize invites storage: ", err)
+	}
 	statsRegisterDbStats()
 
 	// API key signing secret
@@ -831,6 +834,10 @@ func main() {
 	mux.HandleFunc(config.ApiPath+"v1/notification-sources", handleNotificationSources)
 	mux.HandleFunc(config.ApiPath+"v1/notification-sources/ingress", handleNotificationIngress)
 	mux.HandleFunc(config.ApiPath+"v1/notification-sources/", handleNotificationSourceByID)
+	mux.HandleFunc(config.ApiPath+"v1/invites", handleInvites)
+	mux.HandleFunc(config.ApiPath+"v1/invites/", handleInviteByID)
+	mux.HandleFunc(config.ApiPath+"v1/invites/preview", handleInvitePreview)
+	mux.HandleFunc(config.ApiPath+"v1/invite-graph", handleInviteGraph)
 	mux.HandleFunc(config.ApiPath+"v1/notifications", handleNotifications)
 	mux.HandleFunc(config.ApiPath+"v1/notifications/", handleNotificationByID)
 	mux.HandleFunc(config.ApiPath+"v1/notes", handleNotes)

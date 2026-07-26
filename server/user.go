@@ -172,6 +172,9 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	}
 	profileTags := buildProfileSearchTags(user.Public)
 	user.Tags = normalizeTags(append(user.Tags, append(profileTags, credTags...)...), globals.maxTagCount)
+	if !enforceInviteForRegistration(s, msg, &user, creds) {
+		return
+	}
 
 	// Create user record in the database.
 	if _, err := store.Users.Create(&user, private); err != nil {
