@@ -163,7 +163,7 @@ func previewInviteByCode(code string) (invitePreview, error) {
 	err := db.QueryRow(context.Background(), `
 		SELECT i.code, COALESCE(u.public->>'fn', ''), i.status, i.max_uses, i.use_count, i.expires_at
 		FROM invites i
-		LEFT JOIN users u ON u.id = i.inviter_user_id
+		LEFT JOIN users u ON u.id::text = i.inviter_user_id
 		WHERE i.code = $1`, strings.ToUpper(strings.TrimSpace(code)),
 	).Scan(&preview.Code, &inviterDisplayName, &preview.Status, &preview.MaxUses, &preview.UseCount, &expiresAt)
 	if err != nil {
