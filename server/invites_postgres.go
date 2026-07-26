@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v4"
 	"github.com/tinode/chat/server/db/postgres"
 	"github.com/tinode/chat/server/store/types"
 )
@@ -392,7 +393,7 @@ func consumeInviteForRegistration(inviteCode string, s *Session, user any, creds
 }
 
 func assessRegistrationSuspicion(ctx context.Context, tx interface {
-	QueryRow(context.Context, string, ...interface{}) pgxRow
+	QueryRow(context.Context, string, ...interface{}) pgx.Row
 	}, inviterUserID string, s *Session, user *types.User, creds []MsgCredClient) (int, []string, map[string]string) {
 	score := 0
 	reasons := make([]string, 0, 3)
@@ -431,10 +432,6 @@ func assessRegistrationSuspicion(ctx context.Context, tx interface {
 
 	sort.Strings(reasons)
 	return score, reasons, details
-}
-
-type pgxRow interface {
-	Scan(dest ...interface{}) error
 }
 
 func listSignalReasons(userID string) ([]string, error) {
