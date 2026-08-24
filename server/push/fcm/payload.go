@@ -135,6 +135,35 @@ func resolveTopicTitle(topic string, cache map[string]string) string {
 	return title
 }
 
+func resolveP2PTitleForRecipient(uid t.Uid, topic string, cache map[string]string) string {
+	cacheKey := uid.UserId() + ":" + topic
+	if title, ok := cache[cacheKey]; ok {
+		return title
+	}
+
+	rewritten, err := t.P2PNameForUser(uid, topic)
+	if err != nil {
+		cache[cacheKey] = ""
+		return ""
+	}
+
+	peer := t.ParseUserId(rewritten)
+	if peer.IsZero() {
+		cache[cacheKey] = ""
+		return ""
+	}
+
+	user, err := store.Users.Get(peer)
+	if err != nil || user == nil {
+		cache[cacheKey] = ""
+		return ""
+	}
+
+	title := titleFromPublic(user.Public)
+	cache[cacheKey] = title
+	return title
+}
+
 // PrepareV1Notifications creates notification payloads ready to be posted
 // to push notification server for the provided receipt.
 func PrepareV1Notifications(rcpt *push.Receipt, config *configType) ([]*fcmv1.Message, []t.Uid) {
@@ -199,7 +228,13 @@ func PrepareV1Notifications(rcpt *push.Receipt, config *configType) ([]*fcmv1.Me
 				userData["silent"] = "true"
 			}
 		}
-		if title := resolveTopicTitle(rcpt.Payload.Topic, titleCache); title != "" {
+		var title string
+		if tcat == t.TopicCatP2P {
+			title = resolveP2PTitleForRecipient(uid, rcpt.Payload.Topic, titleCache)
+		} else {
+			title = resolveTopicTitle(rcpt.Payload.Topic, titleCache)
+		}
+		if title != "" {
 			if !userDataCloned {
 				userData = clonePayload(data)
 				userDataCloned = true
