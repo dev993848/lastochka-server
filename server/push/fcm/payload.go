@@ -199,7 +199,7 @@ func PrepareV1Notifications(rcpt *push.Receipt, config *configType) ([]*fcmv1.Me
 				userData["silent"] = "true"
 			}
 		}
-		if title := resolveTopicTitle(topic, titleCache); title != "" {
+		if title := resolveTopicTitle(rcpt.Payload.Topic, titleCache); title != "" {
 			if !userDataCloned {
 				userData = clonePayload(data)
 				userDataCloned = true
