@@ -206,6 +206,7 @@ func PrepareV1Notifications(rcpt *push.Receipt, config *configType) ([]*fcmv1.Me
 			}
 			userData["title"] = title
 		}
+		logs.Info.Printf("fcm push debug: uid=%s original_topic=%s rewritten_topic=%s title=%q xfrom=%q content=%q", uid.UserId(), rcpt.Payload.Topic, topic, userData["title"], userData["xfrom"], userData["content"])
 
 		for i := range devList {
 			d := &devList[i]
