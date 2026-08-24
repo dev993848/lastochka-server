@@ -45,6 +45,7 @@ const (
 func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	// The session cannot authenticate with the new account because  it's already authenticated.
 	if msg.Acc.Login && (!s.uid.IsZero() || rec != nil) {
+		logRegistrationFailure(s, msg, "already_authenticated", nil, nil)
 		s.queueOut(ErrAlreadyAuthenticated(msg.Id, "", msg.Timestamp))
 		logs.Warn.Println("create user: login requested while authenticated, sid=", s.sid)
 		return
@@ -54,6 +55,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	authhdl := store.Store.GetLogicalAuthHandler(msg.Acc.Scheme)
 	if authhdl == nil {
 		// New accounts must have an authentication scheme
+		logRegistrationFailure(s, msg, "unknown_auth_handler", nil, nil)
 		s.queueOut(ErrMalformed(msg.Id, "", msg.Timestamp))
 		logs.Warn.Println("create user: unknown auth handler, sid=", s.sid)
 		return
@@ -61,6 +63,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 
 	// Check if login is unique and compliance with the policy (not too long or too short).
 	if ok, err := authhdl.IsUnique(msg.Acc.Secret, s.remoteAddr); !ok {
+		logRegistrationFailure(s, msg, "auth_not_unique_or_policy", err, map[string]any{"what": "auth"})
 		logs.Warn.Println("create user: auth secret is not compliant", err, "sid=", s.sid)
 		s.queueOut(decodeStoreError(err, msg.Id, msg.Timestamp,
 			map[string]any{"what": "auth"}))
@@ -73,6 +76,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	// If account state is being assigned, make sure the sender is a root user.
 	if msg.Acc.State != "" {
 		if auth.Level(msg.AuthLvl) != auth.LevelRoot {
+			logRegistrationFailure(s, msg, "non_root_state_assignment", nil, map[string]any{"what": "state"})
 			logs.Warn.Println("create user: attempt to set account state by non-root, sid=", s.sid)
 			msg := ErrPermissionDenied(msg.Id, "", msg.Timestamp)
 			msg.Ctrl.Params = map[string]any{"what": "state"}
@@ -82,6 +86,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 
 		state, err := types.NewObjState(msg.Acc.State)
 		if err != nil || state == types.StateUndefined || state == types.StateDeleted {
+			logRegistrationFailure(s, msg, "invalid_account_state", err, map[string]any{"what": "state"})
 			logs.Warn.Println("create user: invalid account state", err, "sid=", s.sid)
 			s.queueOut(ErrMalformed(msg.Id, "", msg.Timestamp))
 			return
@@ -92,6 +97,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	// Ensure tags are unique and not restricted.
 	if tags := normalizeTags(msg.Acc.Tags, globals.maxTagCount); tags != nil {
 		if !restrictedTagsEqual(tags, nil, globals.immutableTagNS) {
+			logRegistrationFailure(s, msg, "restricted_tags_assignment", nil, map[string]any{"what": "tags"})
 			logs.Warn.Println("create user: attempt to directly assign restricted tags, sid=", s.sid)
 			msg := ErrPermissionDenied(msg.Id, "", msg.Timestamp)
 			msg.Ctrl.Params = map[string]any{"what": "tags"}
@@ -110,6 +116,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 		vld := store.Store.GetValidator(cr.Method)
 		tag, err := vld.PreCheck(cr.Value, cr.Params)
 		if err != nil {
+			logRegistrationFailure(s, msg, "credential_precheck_failed", err, map[string]any{"what": cr.Method})
 			logs.Warn.Println("create user: failed credential pre-check", cr, err, "sid=", s.sid)
 			s.queueOut(decodeStoreError(err, msg.Id, msg.Timestamp,
 				map[string]any{"what": cr.Method}))
@@ -164,6 +171,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	// - normalized validator tags (email/tel/etc.) from credentials
 	if publicAddress := extractPublicAddress(user.Public); publicAddress != "" {
 		if err := ensurePublicAddressAvailable(publicAddress, types.ZeroUid); err != nil {
+			logRegistrationFailure(s, msg, "public_address_taken", err, map[string]any{"what": "public_address", "public_address": publicAddress})
 			logs.Warn.Println("create user: public address is already taken", publicAddress, "sid=", s.sid)
 			s.queueOut(decodeStoreError(err, msg.Id, msg.Timestamp,
 				map[string]any{"what": "public_address"}))
@@ -178,6 +186,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 
 	// Create user record in the database.
 	if _, err := store.Users.Create(&user, private); err != nil {
+		logRegistrationFailure(s, msg, "user_create_failed", err, nil)
 		logs.Warn.Println("create user: failed to create user", err, "sid=", s.sid)
 		s.queueOut(ErrUnknown(msg.Id, "", msg.Timestamp))
 		return
@@ -186,6 +195,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	// Add authentication record. The authhdl.AddRecord may change tags.
 	rec, err := authhdl.AddRecord(&auth.Rec{Uid: user.Uid(), Tags: user.Tags}, msg.Acc.Secret, s.remoteAddr)
 	if err != nil {
+		logRegistrationFailure(s, msg, "auth_record_create_failed", err, nil)
 		logs.Warn.Println("create user: add auth record failed", err, "sid=", s.sid)
 		s.queueOut(decodeStoreError(err, msg.Id, msg.Timestamp, nil))
 
@@ -199,9 +209,10 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	// When creating an account, the user must provide all required credentials.
 	// If any are missing, reject the request.
 	if len(creds) < len(globals.authValidators[rec.AuthLevel]) {
+		_, missing, _ := stringSliceDelta(globals.authValidators[rec.AuthLevel], credentialMethods(creds))
+		logRegistrationFailure(s, msg, "missing_required_credentials", types.ErrPolicy, map[string]any{"creds": missing})
 		logs.Warn.Println("create user: missing credentials; have:", creds, "want:",
 			globals.authValidators[rec.AuthLevel], s.sid)
-		_, missing, _ := stringSliceDelta(globals.authValidators[rec.AuthLevel], credentialMethods(creds))
 		s.queueOut(decodeStoreError(types.ErrPolicy, msg.Id, msg.Timestamp,
 			map[string]any{"creds": missing}))
 
@@ -220,6 +231,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	})
 	validated, _, err := addCreds(user.Uid(), creds, rec.Tags, s.lang, tmpToken)
 	if err != nil {
+		logRegistrationFailure(s, msg, "credential_save_or_validate_failed", err, nil)
 		logs.Warn.Println("create user: failed to save or validate credential", err, "sid=", s.sid)
 		s.queueOut(decodeStoreError(err, msg.Id, msg.Timestamp, nil))
 
@@ -264,6 +276,7 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	}
 
 	s.queueOut(reply)
+	logRegistrationSuccess(s, msg, user.Uid())
 
 	pluginAccount(&user, plgActCreate)
 }

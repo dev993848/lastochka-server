@@ -118,9 +118,11 @@ func resolveTopicTitle(topic string, cache map[string]string) string {
 	var title string
 	switch t.GetTopicCat(topic) {
 	case t.TopicCatP2P:
-		user, err := store.Users.Get(t.ParseUserId(topic))
-		if err == nil && user != nil {
-			title = titleFromPublic(user.Public)
+		if parsed := t.ParseUserId(topic); !parsed.IsZero() {
+			user, err := store.Users.Get(parsed)
+			if err == nil && user != nil {
+				title = titleFromPublic(user.Public)
+			}
 		}
 	case t.TopicCatGrp:
 		stopic, err := store.Topics.Get(topic)
