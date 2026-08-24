@@ -276,6 +276,7 @@ func enforceInviteForRegistration(s *Session, msg *ClientComMessage, user *types
 
 	inviteCode := inviteCodeFromAccountCreate(msg)
 	if inviteCode == "" {
+		logRegistrationFailure(s, msg, "invite_required", types.ErrPolicy, map[string]any{"what": "invite", "invite_error": "invite_required"})
 		s.queueOut(decodeStoreError(types.ErrPolicy, msg.Id, msg.Timestamp, map[string]any{
 			"what":  "invite",
 			"error": "invite_required",
@@ -285,6 +286,7 @@ func enforceInviteForRegistration(s *Session, msg *ClientComMessage, user *types
 
 	result, err := consumeInviteForRegistration(inviteCode, s, user, creds)
 	if err != nil {
+		logRegistrationFailure(s, msg, "invite_check_failed", err, map[string]any{"what": "invite", "invite_error": err.Error()})
 		logs.Warn.Println("create user: invite check failed", err, "sid=", s.sid)
 		s.queueOut(decodeStoreError(types.ErrPolicy, msg.Id, msg.Timestamp, map[string]any{
 			"what":  "invite",
