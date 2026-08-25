@@ -394,7 +394,53 @@ func (v *validator) TempAuthScheme() (string, error) {
 
 // SendMail replacement
 func (v *validator) sendMail(rcpt []string, msg []byte) error {
-	client, err := smtp.Dial(v.SMTPAddr + ":" + v.SMTPPort)
+	addr := v.SMTPAddr + ":" + v.SMTPPort
+	if v.SMTPPort == "465" {
+		conn, err := tls.Dial("tcp", addr, &tls.Config{
+			InsecureSkipVerify: v.TLSInsecureSkipVerify,
+			ServerName:         v.SMTPAddr,
+		})
+		if err != nil {
+			return err
+		}
+		client, err := smtp.NewClient(conn, v.SMTPAddr)
+		if err != nil {
+			conn.Close()
+			return err
+		}
+		defer client.Close()
+		if err = client.Hello(v.SMTPHeloHost); err != nil {
+			return err
+		}
+		if v.auth != nil {
+			if isauth, _ := client.Extension("AUTH"); isauth {
+				err = client.Auth(v.auth)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if err = client.Mail(strings.ReplaceAll(strings.ReplaceAll(v.senderEmail, "\r", " "), "\n", " ")); err != nil {
+			return err
+		}
+		for _, to := range rcpt {
+			if err = client.Rcpt(strings.ReplaceAll(strings.ReplaceAll(to, "\r", " "), "\n", " ")); err != nil {
+				return err
+			}
+		}
+		w, err := client.Data()
+		if err != nil {
+			return err
+		}
+		if _, err = w.Write(msg); err != nil {
+			return err
+		}
+		if err = w.Close(); err != nil {
+			return err
+		}
+		return client.Quit()
+	}
+	client, err := smtp.Dial(addr)
 	if err != nil {
 		return err
 	}
