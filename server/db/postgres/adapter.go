@@ -3246,7 +3246,7 @@ func (a *adapter) CredConfirm(uid t.Uid, method string) error {
 	res, err := a.db.Exec(
 		ctx,
 		"UPDATE credentials SET updatedat=$1,done=TRUE,synthetic=CONCAT(method,':',value) "+
-			"WHERE userid=$2 AND method=$3 AND deletedat IS NULL AND done=FALSE",
+			"WHERE userid=$2 AND method=$3 AND deletedat IS NULL",
 		t.TimeNow(), store.DecodeUid(uid), method)
 	if err != nil {
 		if isDupe(err) {
