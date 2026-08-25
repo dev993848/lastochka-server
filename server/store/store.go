@@ -260,6 +260,7 @@ type UsersPersistenceInterface interface {
 	Get(uid types.Uid) (*types.User, error)
 	GetAll(uid ...types.Uid) ([]types.User, error)
 	GetByCred(method, value string) (types.Uid, error)
+	GetByCredAll(method, value string) (types.Uid, error)
 	CredExists(method, value string) (bool, error)
 	Delete(id types.Uid, hard bool) error
 	UpdateLastSeen(uid types.Uid, userAgent string, when time.Time) error
@@ -393,6 +394,11 @@ func (usersMapper) GetAll(uid ...types.Uid) ([]types.User, error) {
 // GetByCred returns user ID for the given validated credential.
 func (usersMapper) GetByCred(method, value string) (types.Uid, error) {
 	return adp.UserGetByCred(method, value)
+}
+
+// GetByCredAll returns user ID for the given credential regardless of validation state.
+func (usersMapper) GetByCredAll(method, value string) (types.Uid, error) {
+	return adp.UserGetByCredAll(method, value)
 }
 
 // CredExists checks if a credential (validated or not) is already taken by any user.
