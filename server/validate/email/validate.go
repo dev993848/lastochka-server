@@ -304,6 +304,7 @@ func (v *validator) Request(user t.Uid, email, lang, resp string, tmpToken []byt
 	}
 
 	// Send email without blocking. Email sending may take long time.
+	logs.Info.Println("email validator: queue validation email", email)
 	go v.send(email, content)
 
 	return isNew, nil
@@ -339,6 +340,7 @@ func (v *validator) ResetSecret(email, scheme, lang string, code []byte, params 
 	}
 
 	// Send email without blocking. Email sending may take long time.
+	logs.Info.Println("email validator: queue password reset email", email, "scheme", scheme)
 	go v.send(email, content)
 
 	return nil
@@ -548,9 +550,11 @@ func (v *validator) send(to string, content map[string]string) error {
 	err := v.sendMail([]string{to}, message.Bytes())
 	if err != nil {
 		logs.Warn.Println("SMTP error", to, err)
+		return err
 	}
 
-	return err
+	logs.Info.Println("email validator: SMTP send success", to)
+	return nil
 }
 
 // Check if the template contains all required parts.
