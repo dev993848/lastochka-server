@@ -1327,6 +1327,27 @@ func (a *adapter) UserGetByCred(method, value string) (t.Uid, error) {
 	return t.ZeroUid, err
 }
 
+// UserGetByCredAll returns user ID for the given credential regardless of validation state.
+func (a *adapter) UserGetByCredAll(method, value string) (t.Uid, error) {
+	ctx, cancel := a.getContext()
+	if cancel != nil {
+		defer cancel()
+	}
+	var decoded_uid int64
+	err := a.db.QueryRow(ctx,
+		"SELECT userid FROM credentials WHERE synthetic=$1 OR synthetic LIKE '%'||$2 LIMIT 1",
+		method+":"+value,
+		":"+method+":"+value,
+	).Scan(&decoded_uid)
+	if err == nil {
+		return store.EncodeUid(decoded_uid), nil
+	}
+	if err == pgx.ErrNoRows {
+		return t.ZeroUid, nil
+	}
+	return t.ZeroUid, err
+}
+
 // UserCredExists checks if a credential (validated or not) exists for any user.
 // Validated credentials have synthetic key "method:value",
 // unvalidated have "userid:method:value".

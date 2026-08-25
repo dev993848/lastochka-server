@@ -1012,7 +1012,7 @@ func (s *Session) authSecretReset(params []byte) error {
 	if validator == nil {
 		return types.ErrUnsupported
 	}
-	uid, err := store.Users.GetByCred(credMethod, credValue)
+	uid, err := store.Users.GetByCredAll(credMethod, credValue)
 	if err != nil {
 		return err
 	}

@@ -53,6 +53,8 @@ type Adapter interface {
 	UserUpdateTags(uid t.Uid, add, remove, reset []string) ([]string, error)
 	// UserGetByCred returns user ID for the given validated credential.
 	UserGetByCred(method, value string) (t.Uid, error)
+	// UserGetByCredAll returns user ID for the given credential regardless of validation state.
+	UserGetByCredAll(method, value string) (t.Uid, error)
 	// UserCredExists checks if a credential (validated or not) already exists in the system.
 	UserCredExists(method, value string) (bool, error)
 	// UserUnreadCount returns the total number of unread messages in all topics with
