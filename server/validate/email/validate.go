@@ -331,8 +331,7 @@ func (v *validator) ResetSecret(email, scheme, lang string, code []byte, params 
 
 	content, err := validate.ExecuteTemplate(template, templateParts, map[string]any{
 		"Login":   login,
-		"Code":    string(code),
-		"Cred":    email,
+		"Token":   url.QueryEscape(string(code)),
 		"Scheme":  scheme,
 		"HostUrl": v.HostUrl})
 	if err != nil {
