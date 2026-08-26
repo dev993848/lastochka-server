@@ -311,7 +311,7 @@ func (v *validator) Request(user t.Uid, email, lang, resp string, tmpToken []byt
 }
 
 // ResetSecret sends a message with instructions for resetting an authentication secret.
-func (v *validator) ResetSecret(email, scheme, lang string, code []byte, params map[string]any) error {
+func (v *validator) ResetSecret(email, scheme, lang string, token []byte, params map[string]any) error {
 	// Normalize email to make sure Unicode case collisions don't lead to security problems.
 	email = strings.ToLower(email)
 
@@ -331,9 +331,10 @@ func (v *validator) ResetSecret(email, scheme, lang string, code []byte, params 
 
 	content, err := validate.ExecuteTemplate(template, templateParts, map[string]any{
 		"Login":   login,
-		"Token":   url.QueryEscape(string(code)),
+		"Token":   url.QueryEscape(string(token)),
 		"Scheme":  scheme,
-		"HostUrl": v.HostUrl})
+		"HostUrl": v.HostUrl,
+	})
 	if err != nil {
 		return err
 	}
