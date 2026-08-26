@@ -1036,7 +1036,7 @@ func (s *Session) authSecretReset(params []byte) error {
 		return types.ErrInternal
 	}
 
-	code, _, err := tempAuth.GenSecret(&auth.Rec{
+	token, _, err := tempAuth.GenSecret(&auth.Rec{
 		Uid:        uid,
 		AuthLevel:  auth.LevelAuth,
 		Features:   auth.FeatureNoLogin,
@@ -1046,7 +1046,7 @@ func (s *Session) authSecretReset(params []byte) error {
 		return err
 	}
 
-	return validator.ResetSecret(credValue, authScheme, s.lang, code, resetParams)
+	return validator.ResetSecret(credValue, authScheme, s.lang, token, resetParams)
 }
 
 // onLogin performs steps after successful authentication.
