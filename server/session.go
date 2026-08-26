@@ -1025,11 +1025,7 @@ func (s *Session) authSecretReset(params []byte) error {
 	if err != nil {
 		return err
 	}
-	tempScheme, err := validator.TempAuthScheme()
-	if err != nil {
-		return err
-	}
-
+	tempScheme := "token"
 	tempAuth := store.Store.GetLogicalAuthHandler(tempScheme)
 	if tempAuth == nil || !tempAuth.IsInitialized() {
 		logs.Err.Println("s.authSecretReset: validator with missing temp auth", credMethod, tempScheme, s.sid)
