@@ -329,9 +329,13 @@ func (v *validator) ResetSecret(email, scheme, lang string, token []byte, params
 		login = params["login"].(string)
 	}
 
+	// Reset token is a 50-byte binary blob. Percent-encoding raw bytes makes
+	// the link fragile: URL parsers (e.g. WHATWG URLSearchParams) decode %XX
+	// with UTF-8 semantics and corrupt invalid sequences. base64url keeps the
+	// link ASCII-safe and round-trips the token byte-for-byte.
 	content, err := validate.ExecuteTemplate(template, templateParts, map[string]any{
 		"Login":   login,
-		"Token":   url.QueryEscape(string(token)),
+		"Token":   base64.RawURLEncoding.EncodeToString(token),
 		"Scheme":  scheme,
 		"HostUrl": v.HostUrl,
 	})
