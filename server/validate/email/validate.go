@@ -391,7 +391,7 @@ func (v *validator) Remove(user t.Uid, value string) error {
 
 // TempAuthScheme returns a temporary authentication method used by this validator.
 func (v *validator) TempAuthScheme() (string, error) {
-	return "code", nil
+	return "token", nil
 }
 
 // SendMail replacement
