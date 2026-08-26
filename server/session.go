@@ -1032,9 +1032,13 @@ func (s *Session) authSecretReset(params []byte) error {
 		return types.ErrInternal
 	}
 
+	// Reset token must be short-lived: the reset email says the link is valid
+	// for 24 hours. Default token lifetime (expire_in in auth_config) is much
+	// longer (2 weeks), so pin the lifetime here explicitly.
 	token, _, err := tempAuth.GenSecret(&auth.Rec{
 		Uid:        uid,
 		AuthLevel:  auth.LevelAuth,
+		Lifetime:   auth.Duration(24 * time.Hour),
 		Features:   auth.FeatureNoLogin,
 		Credential: credMethod + ":" + credValue,
 	})
