@@ -326,7 +326,11 @@ func consumeInviteForRegistration(inviteCode string, s *Session, user any, creds
 		FROM invites WHERE code = $1 FOR UPDATE`, strings.ToUpper(strings.TrimSpace(inviteCode)),
 	).Scan(&inviteID, &inviterUserID, &status, &maxUses, &useCount, &expiresAt)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		// pgx v4 returns its own sentinel pgx.ErrNoRows ("no rows in result set"),
+		// which is NOT wrapped in database/sql's sql.ErrNoRows. Match both so an
+		// unknown invite code is reported as a typed invite_not_found instead of
+		// leaking the raw driver error to the client.
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return inviteConsumptionResult{}, errors.New("invite_not_found")
 		}
 		return inviteConsumptionResult{}, err
@@ -394,7 +398,7 @@ func consumeInviteForRegistration(inviteCode string, s *Session, user any, creds
 
 func assessRegistrationSuspicion(ctx context.Context, tx interface {
 	QueryRow(context.Context, string, ...interface{}) pgx.Row
-	}, inviterUserID string, s *Session, user *types.User, creds []MsgCredClient) (int, []string, map[string]string) {
+}, inviterUserID string, s *Session, user *types.User, creds []MsgCredClient) (int, []string, map[string]string) {
 	score := 0
 	reasons := make([]string, 0, 3)
 	details := make(map[string]string)
