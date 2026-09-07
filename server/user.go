@@ -180,16 +180,33 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	}
 	profileTags := buildProfileSearchTags(user.Public)
 	user.Tags = normalizeTags(append(user.Tags, append(profileTags, credTags...)...), globals.maxTagCount)
-	if !enforceInviteForRegistration(s, msg, &user, creds) {
-		return
-	}
 
-	// Create user record in the database.
+	// Create user record in the database. The user must be created BEFORE the
+	// invite is consumed: store.Users.Create assigns the unique user id, and
+	// invite_registrations is keyed by invited_user_id. Consuming the invite
+	// first used to insert an empty invited_user_id (uid not yet assigned),
+	// which made every subsequent invite registration fail with a primary key
+	// violation (duplicate key on invite_registrations_pkey).
 	if _, err := store.Users.Create(&user, private); err != nil {
 		logRegistrationFailure(s, msg, "user_create_failed", err, nil)
 		logs.Warn.Println("create user: failed to create user", err, "sid=", s.sid)
 		s.queueOut(ErrUnknown(msg.Id, "", msg.Timestamp))
 		return
+	}
+
+	// Enforce the invite policy now that the user id is known. On failure roll
+	// back the freshly created (incomplete) user record.
+	if !enforceInviteForRegistration(s, msg, &user, creds) {
+		if err := store.Users.Delete(user.Uid(), true); err != nil {
+			logs.Warn.Println("create user: failed to delete user after invite rejection", err, "sid=", s.sid)
+		}
+		return
+	}
+
+	// enforceInviteForRegistration appended invite-derived tags (reg:invite,
+	// reg:suspicious) to user.Tags after the record was created; persist them.
+	if _, err := store.Users.UpdateTags(user.Uid(), nil, nil, user.Tags); err != nil {
+		logs.Warn.Println("create user: failed to persist invite-derived tags", err, "sid=", s.sid)
 	}
 
 	// Add authentication record. The authhdl.AddRecord may change tags.
