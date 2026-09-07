@@ -11,18 +11,18 @@ import (
 )
 
 type invite struct {
-	ID                  string     `json:"id"`
-	Code                string     `json:"code,omitempty"`
-	InviterUserID       string     `json:"inviter_user_id"`
-	InviterDisplayName  string     `json:"inviter_display_name,omitempty"`
-	Status              string     `json:"status"`
-	MaxUses             int        `json:"max_uses"`
-	UseCount            int        `json:"use_count"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
-	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
-	LastUsedAt          *time.Time `json:"last_used_at,omitempty"`
-	Note                string     `json:"note,omitempty"`
+	ID                 string     `json:"id"`
+	Code               string     `json:"code,omitempty"`
+	InviterUserID      string     `json:"inviter_user_id"`
+	InviterDisplayName string     `json:"inviter_display_name,omitempty"`
+	Status             string     `json:"status"`
+	MaxUses            int        `json:"max_uses"`
+	UseCount           int        `json:"use_count"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt         *time.Time `json:"last_used_at,omitempty"`
+	Note               string     `json:"note,omitempty"`
 }
 
 type inviteListItem struct {
@@ -269,6 +269,20 @@ func inviteCodeFromAccountCreate(msg *ClientComMessage) string {
 	return ""
 }
 
+// inviteClientErrorCode maps the invite consumption error to a short, stable
+// reason code safe to expose to the client. Known typed codes are passed
+// through as-is; everything else (raw driver/DB errors) becomes a generic code.
+func inviteClientErrorCode(err error) string {
+	if err == nil {
+		return "invite_check_failed"
+	}
+	msg := strings.TrimSpace(err.Error())
+	if strings.HasPrefix(msg, "invite_") {
+		return msg
+	}
+	return "invite_check_failed"
+}
+
 func enforceInviteForRegistration(s *Session, msg *ClientComMessage, user *types.User, creds []MsgCredClient) bool {
 	if !inviteRegistrationRequired() {
 		return true
@@ -286,11 +300,13 @@ func enforceInviteForRegistration(s *Session, msg *ClientComMessage, user *types
 
 	result, err := consumeInviteForRegistration(inviteCode, s, user, creds)
 	if err != nil {
+		// Full detail (including raw driver errors) stays in the audit event and
+		// server log; the client only receives a short, typed reason code.
 		logRegistrationFailure(s, msg, "invite_check_failed", err, map[string]any{"what": "invite", "invite_error": err.Error()})
 		logs.Warn.Println("create user: invite check failed", err, "sid=", s.sid)
 		s.queueOut(decodeStoreError(types.ErrPolicy, msg.Id, msg.Timestamp, map[string]any{
 			"what":  "invite",
-			"error": err.Error(),
+			"error": inviteClientErrorCode(err),
 		}))
 		return false
 	}
