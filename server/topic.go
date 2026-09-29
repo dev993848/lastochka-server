@@ -357,6 +357,10 @@ func (t *Topic) registerSession(msg *ClientComMessage) {
 				// Call plugins with the new topic
 				pluginTopic(t, plgActCreate)
 			}
+			// A (re-)subscribed call participant may have a new session
+			// (socket reconnect): re-bind the stored party session so
+			// offer/answer/ICE keep flowing. Repeat-call hang fix.
+			t.refreshCallPartySession(msg)
 		} else {
 			if len(t.sessions) == 0 && t.cat != types.TopicCatSys {
 				// Failed to subscribe, the topic is still inactive

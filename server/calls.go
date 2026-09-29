@@ -351,8 +351,10 @@ func (t *Topic) handleCallEvent(msg *ClientComMessage) {
 	case constCallEventHangUp:
 		switch len(t.currentCall.parties) {
 		case 2:
-			// If it's a call in progress, hangup may arrive only from a call participant session.
-			if _, ok := t.currentCall.parties[msg.sess.sid]; !ok {
+			// Established call: hangup is accepted from either participant
+			// UID, even if their session changed after reconnect (the new
+			// sid is not in parties yet). Repeat-call hang fix.
+			if !t.isCallParticipant(msg.sess.sid, asUid) {
 				return
 			}
 		case 1:
@@ -427,6 +429,55 @@ func (t *Topic) maybeEndCallInProgress(from string, msg *ClientComMessage, callD
 		t.infoCallSubsOffline(from, tgt, constCallEventHangUp, t.currentCall.seq, nil, "", true)
 	}
 	t.currentCall = nil
+}
+
+// refreshCallPartySession re-binds a call party entry to the session which
+// just (re-)subscribed, matching by user ID.
+//
+// Mobile clients reconnect with a new sid (Doze, network switch) while the
+// topic-level subscription persists. Call events are validated by session
+// (see handleCallEvent), so without this refresh offer/answer/ice-candidate
+// and hang-up from the new session are dropped as "non-party session" and
+// both sides hang in "connecting" until full app restart. Repeat-call hang.
+func (t *Topic) refreshCallPartySession(msg *ClientComMessage) {
+	if t.currentCall == nil || msg.sess == nil {
+		return
+	}
+	asUid := types.ParseUserId(msg.AsUser)
+	if asUid.IsZero() {
+		asUid = msg.sess.uid
+	}
+	if asUid.IsZero() {
+		return
+	}
+	for sid, p := range t.currentCall.parties {
+		if p.uid == asUid && sid != msg.sess.sid {
+			delete(t.currentCall.parties, sid)
+			p.sess = callPartySession(msg.sess)
+			t.currentCall.parties[msg.sess.sid] = p
+			logs.Info.Printf("topic[%s]: call party %s session refreshed %s -> %s",
+				t.name, asUid.UserId(), sid, msg.sess.sid)
+			break
+		}
+	}
+}
+
+// isCallParticipant reports whether the sender belongs to the current call,
+// matching either the exact party session (normal case) or the participant
+// user ID (session changed after reconnect and has not re-subscribed yet).
+func (t *Topic) isCallParticipant(sid string, uid types.Uid) bool {
+	if t.currentCall == nil {
+		return false
+	}
+	if _, ok := t.currentCall.parties[sid]; ok {
+		return true
+	}
+	for _, p := range t.currentCall.parties {
+		if p.uid == uid {
+			return true
+		}
+	}
+	return false
 }
 
 // Server initiated call termination.

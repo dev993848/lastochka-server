@@ -47,6 +47,11 @@ func (t *Topic) pushForData(fromUid types.Uid, data *MsgServerData, msgMarkedAsR
 		receipt.Payload.Webrtc = webrtc
 		audioOnly, _ := data.Head["aonly"].(bool)
 		receipt.Payload.AudioOnly = audioOnly
+		// The sender gets a silent sync push on sibling devices; recipients
+		// get a visible incoming-call push when no live session is attached.
+		if webrtc == "started" && t.cat == types.TopicCatP2P && fromUid.String() == data.From {
+			receipt.Payload.Silent = true
+		}
 	}
 	if replace, found := data.Head["replace"].(string); found {
 		receipt.Payload.Replace = replace
