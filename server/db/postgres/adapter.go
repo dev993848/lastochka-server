@@ -47,7 +47,7 @@ type adapter struct {
 }
 
 const (
-	adpVersion  = 117
+	adpVersion  = 116
 	adapterName = "postgres"
 
 	defaultMaxResults = 1024
@@ -703,28 +703,6 @@ func (a *adapter) UpgradeDb() error {
 		}
 
 		if err := bumpVersion(a, 116); err != nil {
-			return err
-		}
-	}
-
-	if a.version == 116 {
-		// Perform database upgrade from version 116 to version 117.
-
-		// Message reactions (one row per topic/message/user).
-		if _, err := a.db.Exec(ctx,
-			`CREATE TABLE reactions(
-				topic  VARCHAR(25) NOT NULL,
-				seqid  INT NOT NULL,
-				userid BIGINT NOT NULL,
-				emoji  VARCHAR(32) NOT NULL,
-				PRIMARY KEY(topic, seqid, userid),
-				FOREIGN KEY(topic) REFERENCES topics(name) ON DELETE CASCADE
-			);
-			CREATE INDEX reactions_topic_seqid ON reactions(topic, seqid)`); err != nil {
-			return err
-		}
-
-		if err := bumpVersion(a, 117); err != nil {
 			return err
 		}
 	}
