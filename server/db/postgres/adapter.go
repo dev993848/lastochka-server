@@ -47,7 +47,7 @@ type adapter struct {
 }
 
 const (
-	adpVersion  = 116
+	adpVersion  = 117
 	adapterName = "postgres"
 
 	defaultMaxResults = 1024
@@ -520,6 +520,20 @@ func (a *adapter) CreateDb(reset bool) error {
 		return err
 	}
 
+	// Message reactions: one row per (topic, message seq, reacting user).
+	if _, err = tx.Exec(ctx,
+		`CREATE TABLE reactions(
+			topic  VARCHAR(25) NOT NULL,
+			seqid  INT NOT NULL,
+			userid BIGINT NOT NULL,
+			emoji  VARCHAR(32) NOT NULL,
+			PRIMARY KEY(topic, seqid, userid),
+			FOREIGN KEY(topic) REFERENCES topics(name) ON DELETE CASCADE
+		);
+		CREATE INDEX reactions_topic_seqid ON reactions(topic, seqid);`); err != nil {
+		return err
+	}
+
 	// User credentials
 	if _, err = tx.Exec(ctx,
 		`CREATE TABLE credentials(
@@ -689,6 +703,28 @@ func (a *adapter) UpgradeDb() error {
 		}
 
 		if err := bumpVersion(a, 116); err != nil {
+			return err
+		}
+	}
+
+	if a.version == 116 {
+		// Perform database upgrade from version 116 to version 117.
+
+		// Message reactions (one row per topic/message/user).
+		if _, err := a.db.Exec(ctx,
+			`CREATE TABLE reactions(
+				topic  VARCHAR(25) NOT NULL,
+				seqid  INT NOT NULL,
+				userid BIGINT NOT NULL,
+				emoji  VARCHAR(32) NOT NULL,
+				PRIMARY KEY(topic, seqid, userid),
+				FOREIGN KEY(topic) REFERENCES topics(name) ON DELETE CASCADE
+			);
+			CREATE INDEX reactions_topic_seqid ON reactions(topic, seqid)`); err != nil {
+			return err
+		}
+
+		if err := bumpVersion(a, 117); err != nil {
 			return err
 		}
 	}
@@ -2936,6 +2972,66 @@ func (a *adapter) MessageDeleteList(topic string, toDel *t.DelMessage) (err erro
 	}
 
 	return tx.Commit(ctx)
+}
+
+// ReactionSave upserts one user's reaction to a message.
+func (a *adapter) ReactionSave(topic string, seq int, user t.Uid, emoji string) error {
+	ctx, cancel := a.getContext()
+	if cancel != nil {
+		defer cancel()
+	}
+	_, err := a.db.Exec(ctx,
+		`INSERT INTO reactions(topic,seqid,userid,emoji) VALUES($1,$2,$3,$4)
+		ON CONFLICT(topic,seqid,userid) DO UPDATE SET emoji=EXCLUDED.emoji`,
+		topic, seq, store.DecodeUid(user), emoji)
+	return err
+}
+
+// ReactionDelete removes one user's reaction from a message.
+func (a *adapter) ReactionDelete(topic string, seq int, user t.Uid) error {
+	ctx, cancel := a.getContext()
+	if cancel != nil {
+		defer cancel()
+	}
+	_, err := a.db.Exec(ctx,
+		`DELETE FROM reactions WHERE topic=$1 AND seqid=$2 AND userid=$3`,
+		topic, seq, store.DecodeUid(user))
+	return err
+}
+
+// ReactionsForMessages returns seq -> (userID string -> emoji) for the given messages.
+func (a *adapter) ReactionsForMessages(topic string, seqs []int) (map[int]map[string]string, error) {
+	result := map[int]map[string]string{}
+	if len(seqs) == 0 {
+		return result, nil
+	}
+	ctx, cancel := a.getContext()
+	if cancel != nil {
+		defer cancel()
+	}
+	rows, err := a.db.Query(ctx,
+		`SELECT seqid,userid,emoji FROM reactions WHERE topic=$1 AND seqid=ANY($2)`,
+		topic, seqs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var seq int
+	var userId int64
+	var emoji string
+	for rows.Next() {
+		if err = rows.Scan(&seq, &userId, &emoji); err != nil {
+			return nil, err
+		}
+		uid := store.EncodeUid(userId)
+		byUser, ok := result[seq]
+		if !ok {
+			byUser = map[string]string{}
+			result[seq] = byUser
+		}
+		byUser[uid.UserId()] = emoji
+	}
+	return result, rows.Err()
 }
 
 func deviceHasher(deviceID string) string {
