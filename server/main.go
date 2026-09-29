@@ -481,6 +481,9 @@ func main() {
 	if err = ensureInvitesStorage(); err != nil {
 		logs.Err.Fatal("Failed to initialize invites storage: ", err)
 	}
+	if err = ensureReactionsStorage(); err != nil {
+		logs.Err.Fatal("Failed to initialize reactions storage: ", err)
+	}
 	statsRegisterDbStats()
 
 	// API key signing secret
