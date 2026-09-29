@@ -357,6 +357,10 @@ func (t *Topic) registerSession(msg *ClientComMessage) {
 				// Call plugins with the new topic
 				pluginTopic(t, plgActCreate)
 			}
+			// A (re-)subscribed call participant may have a new session
+			// (socket reconnect): re-bind the stored party session so
+			// offer/answer/ICE keep flowing. Repeat-call hang fix.
+			t.refreshCallPartySession(msg)
 		} else {
 			if len(t.sessions) == 0 && t.cat != types.TopicCatSys {
 				// Failed to subscribe, the topic is still inactive
@@ -1118,6 +1122,13 @@ func (t *Topic) handlePubBroadcast(msg *ClientComMessage) {
 		}
 	}
 
+	// Reaction carrier (see reactions.go: parseReactionCarrier): processed
+	// like {note what="react"} but no message is saved.
+	if reactSeq, reactOp, isReact := parseReactionCarrier(msg); isReact {
+		t.handleReactionCarrier(msg, asUid, reactSeq, reactOp)
+		return
+	}
+
 	// Save to DB at master topic.
 	var attachments []string
 	if msg.Extra != nil && len(msg.Extra.Attachments) > 0 {
@@ -1174,6 +1185,10 @@ func (t *Topic) handleNoteBroadcast(msg *ClientComMessage) {
 	case "call":
 		// Handle calls separately.
 		t.handleCallEvent(msg)
+		return
+	case "react":
+		// Message reactions (emoji): validate, persist, fan out.
+		t.handleReactionEvent(msg)
 		return
 	}
 
@@ -2817,6 +2832,9 @@ func (t *Topic) replyGetData(sess *Session, asUid types.Uid, asChan bool, req *M
 			sess.queueOut(ErrUnknownReply(msg, now))
 			return err
 		}
+
+		// Attach synced reactions so clients don't need a separate request.
+		enrichMessagesWithReactions(t.name, messages)
 
 		// Push the list of messages to the client as {data}.
 		if messages != nil {

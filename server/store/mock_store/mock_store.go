@@ -559,6 +559,21 @@ func (mr *MockUsersPersistenceInterfaceMockRecorder) GetByCred(method, value int
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByCred", reflect.TypeOf((*MockUsersPersistenceInterface)(nil).GetByCred), method, value)
 }
 
+// GetByCredAll mocks base method.
+func (m *MockUsersPersistenceInterface) GetByCredAll(method, value string) (types.Uid, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByCredAll", method, value)
+	ret0, _ := ret[0].(types.Uid)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByCredAll indicates an expected call of GetByCredAll.
+func (mr *MockUsersPersistenceInterfaceMockRecorder) GetByCredAll(method, value interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByCredAll", reflect.TypeOf((*MockUsersPersistenceInterface)(nil).GetByCredAll), method, value)
+}
+
 // CredExists mocks base method.
 func (m *MockUsersPersistenceInterface) CredExists(method, value string) (bool, error) {
 	m.ctrl.T.Helper()

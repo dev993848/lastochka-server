@@ -694,6 +694,47 @@ type MessagesPersistenceInterface interface {
 	GetDeleted(topic string, forUser types.Uid, opt *types.QueryOpt) ([]types.Range, int, error)
 }
 
+// ReactionStore is an OPTIONAL adapter interface for message reactions.
+//
+// Unlike the persistence interfaces above it is satisfied implicitly and
+// probed at runtime (see reactionsMapper): adapters which do not implement
+// it keep compiling untouched, reactions just report "not supported".
+// Only the postgres adapter implements it.
+type ReactionStore interface {
+	ReactionSave(topic string, seq int, user types.Uid, emoji string) error
+	ReactionDelete(topic string, seq int, user types.Uid) error
+	// ReactionsForMessages returns seq -> (userID string -> emoji).
+	ReactionsForMessages(topic string, seqs []int) (map[int]map[string]string, error)
+}
+
+var errReactionsNotSupported = errors.New("reactions not supported by the database adapter")
+
+type reactionsMapper struct{}
+
+// Reactions exposes message-reaction storage (see ReactionStore).
+var Reactions reactionsMapper
+
+func (reactionsMapper) Save(topic string, seq int, user types.Uid, emoji string) error {
+	if rs, ok := adp.(ReactionStore); ok {
+		return rs.ReactionSave(topic, seq, user, emoji)
+	}
+	return errReactionsNotSupported
+}
+
+func (reactionsMapper) Delete(topic string, seq int, user types.Uid) error {
+	if rs, ok := adp.(ReactionStore); ok {
+		return rs.ReactionDelete(topic, seq, user)
+	}
+	return errReactionsNotSupported
+}
+
+func (reactionsMapper) ForMessages(topic string, seqs []int) (map[int]map[string]string, error) {
+	if rs, ok := adp.(ReactionStore); ok {
+		return rs.ReactionsForMessages(topic, seqs)
+	}
+	return nil, errReactionsNotSupported
+}
+
 // messagesMapper is a concrete type implementing MessagesPersistenceInterface.
 type messagesMapper struct{}
 
