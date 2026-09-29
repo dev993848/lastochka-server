@@ -1075,6 +1075,8 @@ func TestDispatchAccNew(t *testing.T) {
 			user.SetUid(uid)
 			return user, nil
 		})
+	// Persist invite-derived tags right after user creation (user.go).
+	uu.EXPECT().UpdateTags(uid, nil, nil, gomock.Any()).Return(nil, nil)
 	aa.EXPECT().AddRecord(gomock.Any(), []byte(secret), remoteAddr).Return(authRec, nil)
 
 	// Token generation.
