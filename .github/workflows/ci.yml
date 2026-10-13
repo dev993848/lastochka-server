@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [dev, master]
+  pull_request:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Build (default tags)
+        run: go build ./server/
+      - name: Build (postgres)
+        run: go build -tags postgres ./server/
+      - name: Vet
+        run: go vet ./server/
+      - name: gofmt (Lastochka-owned files only, upstream untouched)
+        run: |
+          test -z "$(gofmt -l \
+            server/notes.go server/notes_test.go \
+            server/invites.go server/invites_test.go \
+            server/reactions.go server/reactions_test.go \
+            server/notification_sources.go server/notification_sources_test.go \
+            server/notification_events.go server/notification_events_test.go \
+            server/registration_audit.go server/registration_audit_test.go \
+            server/avatar_processor.go server/avatar_processor_test.go)"
+      - name: Tests
+        run: go test ./server/
