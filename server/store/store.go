@@ -858,6 +858,35 @@ func (messagesMapper) GetDeleted(topic string, forUser types.Uid, opt *types.Que
 	return ranges, maxID, nil
 }
 
+// MessageEditStore is an OPTIONAL adapter interface for in-place message
+// edits (see org/docs/main/contracts/edit-reply.md).
+//
+// Same pattern as ReactionStore: satisfied implicitly, probed at runtime.
+// Adapters which do not implement it keep compiling untouched, edits just
+// report "not supported". Only the postgres adapter implements it.
+type MessageEditStore interface {
+	// MessageUpdateContent replaces head/content of the author's own
+	// non-deleted message. Returns rows affected (0 = no such message,
+	// foreign message, or already deleted).
+	MessageUpdateContent(topic string, seq int, fromUid types.Uid, head types.KVMap, content any) (int64, error)
+}
+
+var ErrEditsNotSupported = errors.New("message edits not supported by the database adapter")
+
+type editsMapper struct{}
+
+// MessageEdits exposes in-place message edits (see MessageEditStore).
+var MessageEdits editsMapper
+
+// UpdateContent replaces head/content of a message, or reports
+// ErrEditsNotSupported when the adapter cannot do it.
+func (editsMapper) UpdateContent(topic string, seq int, fromUid types.Uid, head types.KVMap, content any) (int64, error) {
+	if es, ok := adp.(MessageEditStore); ok {
+		return es.MessageUpdateContent(topic, seq, fromUid, head, content)
+	}
+	return 0, ErrEditsNotSupported
+}
+
 // Registered authentication handlers.
 var authHandlers map[string]auth.AuthHandler
 

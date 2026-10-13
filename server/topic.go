@@ -1129,6 +1129,22 @@ func (t *Topic) handlePubBroadcast(msg *ClientComMessage) {
 		return
 	}
 
+	// Edit carrier (see edit.go: parseEditHead): update in place, no new seq.
+	// Must come before save; call signalling (head.webrtc) is excluded inside.
+	if editSeq, isEdit := parseEditHead(msg); isEdit {
+		t.handleEditMessage(msg, asUid, editSeq)
+		return
+	}
+
+	// Reply marker (see edit.go: parseReplyHead): only the range is checked,
+	// the message itself is saved normally below.
+	if replySeq, hasReply := parseReplyHead(msg); hasReply {
+		if !t.isValidReplyTarget(replySeq) {
+			msg.sess.queueOut(ErrMalformedReply(msg, types.TimeNow()))
+			return
+		}
+	}
+
 	// Save to DB at master topic.
 	var attachments []string
 	if msg.Extra != nil && len(msg.Extra.Attachments) > 0 {

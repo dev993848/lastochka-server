@@ -2952,6 +2952,25 @@ func (a *adapter) MessageDeleteList(topic string, toDel *t.DelMessage) (err erro
 	return tx.Commit(ctx)
 }
 
+// MessageUpdateContent replaces head/content of the author's own non-deleted
+// message (see org/docs/main/contracts/edit-reply.md). Author-only is enforced
+// in SQL ("from" must match). Returns rows affected: 0 means no such message,
+// a foreign message, or an already deleted one.
+func (a *adapter) MessageUpdateContent(topic string, seq int, fromUid t.Uid, head t.KVMap, content any) (int64, error) {
+	ctx, cancel := a.getContext()
+	if cancel != nil {
+		defer cancel()
+	}
+	tag, err := a.db.Exec(ctx,
+		`UPDATE messages SET head=$1, content=$2, updatedat=NOW()
+		WHERE topic=$3 AND seqid=$4 AND "from"=$5 AND deletedat IS NULL`,
+		head, common.ToJSON(content), topic, seq, store.DecodeUid(fromUid))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ReactionSave upserts one user's reaction to a message.
 func (a *adapter) ReactionSave(topic string, seq int, user t.Uid, emoji string) error {
 	ctx, cancel := a.getContext()
