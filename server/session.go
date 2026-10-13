@@ -1066,6 +1066,12 @@ func (s *Session) onLogin(msgID string, timestamp time.Time, rec *auth.Rec, miss
 		"user":    rec.Uid.UserId(),
 		"authlvl": rec.AuthLevel.String(),
 	}
+	if len(missing) > 0 && isServiceProvisionedUser(rec.Uid) {
+		// Operator-vouched employee accounts carry no email and must never
+		// be held at credential validation (see business-provisioning.md).
+		logs.Info.Println("s.login: service-provisioned user, skipping credential demand", rec.Uid, s.sid)
+		missing = nil
+	}
 	if len(missing) > 0 {
 		// Some credentials are not validated yet. Respond with request for validation.
 		reply = InfoValidateCredentials(msgID, timestamp)

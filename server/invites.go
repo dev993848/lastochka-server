@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tinode/chat/server/logs"
+	"github.com/tinode/chat/server/store"
 	"github.com/tinode/chat/server/store/types"
 )
 
@@ -315,6 +316,22 @@ func inviteClientErrorCode(err error) string {
 // account creation. It consumes the invite from acc.tags, stamps derived tags
 // (reg:invite, reg:suspicious) on the user and returns false (with the client
 // already answered) when registration must be rejected.
+// isServiceProvisionedUser reports whether the account was created via
+// service provisioning (operator-vouched employee, "reg:service" tag).
+// Such accounts are exempt from credential-validation demands at login.
+func isServiceProvisionedUser(uid types.Uid) bool {
+	user, err := store.Users.Get(uid)
+	if err != nil || user == nil {
+		return false
+	}
+	for _, tag := range user.Tags {
+		if tag == "reg:service" {
+			return true
+		}
+	}
+	return false
+}
+
 // isServiceSession reports whether the session was opened with a root API key
 // (service-to-service provisioning, e.g. Business Server creating employee
 // accounts). The flag is set once at handshake and never afterwards.

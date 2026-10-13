@@ -224,8 +224,9 @@ func replyCreateUser(s *Session, msg *ClientComMessage, rec *auth.Rec) {
 	}
 
 	// When creating an account, the user must provide all required credentials.
-	// If any are missing, reject the request.
-	if len(creds) < len(globals.authValidators[rec.AuthLevel]) {
+	// If any are missing, reject the request. Service-provisioned accounts
+	// (operator-created employees) are exempt: the operator vouches for them.
+	if !isServiceSession(s) && len(creds) < len(globals.authValidators[rec.AuthLevel]) {
 		_, missing, _ := stringSliceDelta(globals.authValidators[rec.AuthLevel], credentialMethods(creds))
 		logRegistrationFailure(s, msg, "missing_required_credentials", types.ErrPolicy, map[string]any{"creds": missing})
 		logs.Warn.Println("create user: missing credentials; have:", creds, "want:",
