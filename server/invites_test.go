@@ -52,8 +52,6 @@ func TestInviteClientErrorCode(t *testing.T) {
 }
 
 func TestBuildInviteDerivedTags(t *testing.T) {
-	// Note: tests build against the non-postgres stub, where
-	// inviteConsumptionResult only carries SuspicionScore.
 	clean := buildInviteDerivedTags(inviteConsumptionResult{})
 	if !reflect.DeepEqual(clean, []string{"reg:invite"}) {
 		t.Errorf("clean invite tags = %v, want [reg:invite]", clean)
@@ -62,5 +60,17 @@ func TestBuildInviteDerivedTags(t *testing.T) {
 	suspicious := buildInviteDerivedTags(inviteConsumptionResult{SuspicionScore: 3})
 	if !reflect.DeepEqual(suspicious, []string{"reg:invite", "reg:suspicious"}) {
 		t.Errorf("suspicious invite tags = %v, want [reg:invite reg:suspicious]", suspicious)
+	}
+}
+
+func TestIsServiceSession(t *testing.T) {
+	if isServiceSession(nil) {
+		t.Error("nil session must not be a service session")
+	}
+	if isServiceSession(&Session{}) {
+		t.Error("plain session must not be a service session")
+	}
+	if !isServiceSession(&Session{isService: true}) {
+		t.Error("root-keyed session must be a service session")
 	}
 }

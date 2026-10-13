@@ -168,11 +168,14 @@ var upgrader = websocket.Upgrader{
 func serveWebSocket(wrt http.ResponseWriter, req *http.Request) {
 	now := types.TimeNow()
 
-	if isValid, _ := checkAPIKey(getAPIKey(req)); !isValid {
+	isRootKey := false
+	if isValid, isRoot := checkAPIKey(getAPIKey(req)); !isValid {
 		wrt.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(wrt).Encode(ErrAPIKeyRequired(now))
 		logs.Err.Println("ws: Missing, invalid or expired API key")
 		return
+	} else {
+		isRootKey = isRoot
 	}
 
 	if req.Method != http.MethodGet {
@@ -192,6 +195,7 @@ func serveWebSocket(wrt http.ResponseWriter, req *http.Request) {
 	}
 
 	sess, count := globals.sessionStore.NewSession(ws, "")
+	sess.isService = isRootKey
 	if globals.useXForwardedFor {
 		sess.remoteAddr = req.Header.Get("X-Forwarded-For")
 		if !isRoutableIP(sess.remoteAddr) {

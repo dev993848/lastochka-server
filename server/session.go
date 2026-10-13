@@ -107,6 +107,12 @@ type Session struct {
 	// Authentication level - NONE (unset), ANON, AUTH, ROOT.
 	authLvl auth.Level
 
+	// isService marks sessions opened with a root API key (service-to-service
+	// provisioning, e.g. Business Server). Such sessions bypass the invite
+	// gate in enforceInviteForRegistration and stamp "reg:service".
+	// Set once at handshake (hdl_websock/hdl_longpoll), never afterwards.
+	isService bool
+
 	// Time when the long polling session was last refreshed
 	lastTouched time.Time
 

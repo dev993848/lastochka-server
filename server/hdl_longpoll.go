@@ -132,10 +132,13 @@ func serveLongPoll(wrt http.ResponseWriter, req *http.Request) {
 
 	enc := json.NewEncoder(wrt)
 
-	if isValid, _ := checkAPIKey(getAPIKey(req)); !isValid {
+	isRootKey := false
+	if isValid, isRoot := checkAPIKey(getAPIKey(req)); !isValid {
 		wrt.WriteHeader(http.StatusForbidden)
 		enc.Encode(ErrAPIKeyRequired(now))
 		return
+	} else {
+		isRootKey = isRoot
 	}
 
 	// TODO(gene): should it be configurable?
@@ -159,6 +162,7 @@ func serveLongPoll(wrt http.ResponseWriter, req *http.Request) {
 		// New session
 		var count int
 		sess, count = globals.sessionStore.NewSession(wrt, "")
+		sess.isService = isRootKey
 		sess.remoteAddr = getRemoteAddr(req)
 		logs.Info.Println("longPoll: session started", sess.sid, sess.remoteAddr, count)
 

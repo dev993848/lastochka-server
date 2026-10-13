@@ -315,8 +315,24 @@ func inviteClientErrorCode(err error) string {
 // account creation. It consumes the invite from acc.tags, stamps derived tags
 // (reg:invite, reg:suspicious) on the user and returns false (with the client
 // already answered) when registration must be rejected.
+// isServiceSession reports whether the session was opened with a root API key
+// (service-to-service provisioning, e.g. Business Server creating employee
+// accounts). The flag is set once at handshake and never afterwards.
+func isServiceSession(s *Session) bool {
+	return s != nil && s.isService
+}
+
 func enforceInviteForRegistration(s *Session, msg *ClientComMessage, user *types.User, creds []MsgCredClient) bool {
 	if !inviteRegistrationRequired() {
+		return true
+	}
+
+	// Service provisioning bypasses the invite gate: business employees are
+	// created by the operator panel, not by self-registration. The account is
+	// stamped for audit; the success event is posted by the caller as usual.
+	if isServiceSession(s) {
+		user.Tags = normalizeTags(append(user.Tags, "reg:service"), globals.maxTagCount)
+		logs.Info.Println("create user: service-provisioned account, sid=", s.sid)
 		return true
 	}
 
