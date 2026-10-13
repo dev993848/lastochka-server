@@ -1,3 +1,11 @@
+// User notifications REST API (/v1/notifications) and external ingress (/v1/ingress).
+//
+// External systems post notifications with a source token; users read and
+// manage them with their session auth. Persistence is PostgreSQL-backed (see
+// notification_events_postgres.go, notification_events_stub.go). Token
+// extraction and content normalization are pure and unit-tested in
+// notification_events_test.go.
+
 package main
 
 import (
@@ -11,6 +19,7 @@ import (
 	"github.com/tinode/chat/server/store/types"
 )
 
+// notificationEvent is a single notification delivered to a user.
 type notificationEvent struct {
 	ID         string          `json:"id"`
 	SourceID   string          `json:"source_id"`
@@ -22,6 +31,9 @@ type notificationEvent struct {
 	ReadAt     *time.Time      `json:"read_at,omitempty"`
 }
 
+// notificationIngressRequest is the JSON body of POST /v1/ingress.
+// Title and body fall back to each other and to the source name
+// (see normalizeIngressContent).
 type notificationIngressRequest struct {
 	Title   string          `json:"title"`
 	Text    string          `json:"text"`
@@ -29,6 +41,8 @@ type notificationIngressRequest struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// handleNotificationIngress accepts a notification from an external system.
+// Auth is the source token (see notificationIngressToken), not the user session.
 func handleNotificationIngress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -57,25 +71,13 @@ func handleNotificationIngress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Title = strings.TrimSpace(req.Title)
-	req.Text = strings.TrimSpace(req.Text)
-	req.Body = strings.TrimSpace(req.Body)
-	if req.Body == "" {
-		req.Body = req.Text
-	}
-	if req.Title == "" && req.Body == "" {
+	title, body, valid := normalizeIngressContent(req.Title, req.Text, req.Body, source.Name)
+	if !valid {
 		writeJSONError(w, http.StatusBadRequest, "title or body is required")
 		return
 	}
-	if req.Title == "" {
-		req.Title = source.Name
-	}
-	payload := req.Payload
-	if len(payload) == 0 {
-		payload = json.RawMessage("{}")
-	}
 
-	item, err := createNotificationEvent(ownerID, source, req.Title, req.Body, payload)
+	item, err := createNotificationEvent(ownerID, source, title, body, normalizeIngressPayload(req.Payload))
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -85,6 +87,8 @@ func handleNotificationIngress(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusCreated, item)
 }
 
+// handleNotifications routes GET/POST /v1/notifications (list / mark one read)
+// for the authenticated user.
 func handleNotifications(w http.ResponseWriter, r *http.Request) {
 	uid, ok := authenticateUserRequest(w, r)
 	if !ok {
@@ -101,6 +105,8 @@ func handleNotifications(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleNotificationByID routes per-notification and bulk actions:
+// DELETE /v1/notifications/{id}, POST .../read-all, DELETE .../read.
 func handleNotificationByID(w http.ResponseWriter, r *http.Request) {
 	uid, ok := authenticateUserRequest(w, r)
 	if !ok {
@@ -142,6 +148,8 @@ func handleNotificationByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleNotificationsList writes the user's notifications with an unread counter.
+// Query params: limit (1..200, default 100), unread_only (1/true).
 func handleNotificationsList(w http.ResponseWriter, r *http.Request, uid types.Uid) {
 	limit := 100
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
@@ -166,6 +174,7 @@ func handleNotificationsList(w http.ResponseWriter, r *http.Request, uid types.U
 	writeJSONStatus(w, http.StatusOK, map[string]any{"items": items, "unread_count": unreadCount})
 }
 
+// handleNotificationsMarkRead marks one notification (JSON body {"id": ...}) as read.
 func handleNotificationsMarkRead(w http.ResponseWriter, r *http.Request, uid types.Uid) {
 	var req struct {
 		ID string `json:"id"`
@@ -193,6 +202,7 @@ func handleNotificationsMarkRead(w http.ResponseWriter, r *http.Request, uid typ
 	writeJSONStatus(w, http.StatusOK, item)
 }
 
+// handleNotificationsDelete removes one notification, 404 when absent.
 func handleNotificationsDelete(w http.ResponseWriter, uid types.Uid, id string) {
 	if err := deleteNotificationEvent(uid.UserId(), id); errors.Is(err, errNotificationEventNotFound) {
 		writeJSONError(w, http.StatusNotFound, "notification not found")
@@ -205,6 +215,8 @@ func handleNotificationsDelete(w http.ResponseWriter, uid types.Uid, id string) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleNotificationsMarkAllRead marks all user notifications as read,
+// returning the count of updated rows.
 func handleNotificationsMarkAllRead(w http.ResponseWriter, uid types.Uid) {
 	updated, err := markAllNotificationEventsRead(uid.UserId())
 	if err != nil {
@@ -214,6 +226,8 @@ func handleNotificationsMarkAllRead(w http.ResponseWriter, uid types.Uid) {
 	writeJSONStatus(w, http.StatusOK, map[string]any{"updated": updated})
 }
 
+// handleNotificationsDeleteRead deletes all read notifications of the user,
+// returning the count of deleted rows.
 func handleNotificationsDeleteRead(w http.ResponseWriter, uid types.Uid) {
 	deleted, err := deleteReadNotificationEvents(uid.UserId())
 	if err != nil {
@@ -223,6 +237,36 @@ func handleNotificationsDeleteRead(w http.ResponseWriter, uid types.Uid) {
 	writeJSONStatus(w, http.StatusOK, map[string]any{"deleted": deleted})
 }
 
+// normalizeIngressContent trims and resolves the ingress title/body fallbacks:
+// body falls back to text, title falls back to the source name. It returns
+// valid=false when both end up empty (request must be rejected).
+func normalizeIngressContent(title, text, body, defaultTitle string) (string, string, bool) {
+	title = strings.TrimSpace(title)
+	text = strings.TrimSpace(text)
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = text
+	}
+	if title == "" && body == "" {
+		return "", "", false
+	}
+	if title == "" {
+		title = defaultTitle
+	}
+	return title, body, true
+}
+
+// normalizeIngressPayload defaults an empty payload to an empty JSON object
+// so downstream consumers always see valid JSON.
+func normalizeIngressPayload(payload json.RawMessage) json.RawMessage {
+	if len(payload) == 0 {
+		return json.RawMessage("{}")
+	}
+	return payload
+}
+
+// notificationIngressToken extracts the source token from an ingress request.
+// Precedence: X-Source-Token header, Authorization: Bearer, ?token= query.
 func notificationIngressToken(r *http.Request) string {
 	if token := strings.TrimSpace(r.Header.Get("X-Source-Token")); token != "" {
 		return token

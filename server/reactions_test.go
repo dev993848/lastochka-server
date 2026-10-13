@@ -24,10 +24,10 @@ func TestParseReactionCarrier(t *testing.T) {
 		{},
 		mkmsg(nil),
 		mkmsg(map[string]any{}),
-		mkmsg(map[string]any{"react": "42"}),          // missing ':' prefix
-		mkmsg(map[string]any{"react": ":0"}),          // non-positive seq
-		mkmsg(map[string]any{"react": ":-3"}),         // negative seq
-		mkmsg(map[string]any{"react": ":abc"}),        // not a number
+		mkmsg(map[string]any{"react": "42"}),   // missing ':' prefix
+		mkmsg(map[string]any{"react": ":0"}),   // non-positive seq
+		mkmsg(map[string]any{"react": ":-3"}),  // negative seq
+		mkmsg(map[string]any{"react": ":abc"}), // not a number
 		mkmsg(map[string]any{"react": ":5", "react-op": "bogus"}),
 	}
 	for i, msg := range invalid {

@@ -1,3 +1,8 @@
+// Avatar photo post-processing: inline base64 avatars larger than 50KB are
+// downscaled and recompressed to JPEG on ingest, so message payloads stay
+// small. Photos already stored as S3 links (photo.ref) or small enough pass
+// through untouched. Pure and unit-tested in avatar_processor_test.go.
+
 package main
 
 import (
@@ -13,12 +18,17 @@ import (
 )
 
 const (
-	avatarMaxSide  = 200
+	// avatarMaxSide is the longest side of a downscaled avatar in pixels.
+	avatarMaxSide = 200
+	// avatarMaxBytes is the size threshold: inline photos at or below it
+	// are kept as-is, larger ones are recompressed.
 	avatarMaxBytes = 50_000 // 50KB target
 )
 
 // processAvatarPhoto checks if public.photo contains inline base64 data
-// and replaces it with a compressed version.
+// and replaces it with a downscaled JPEG version when it exceeds
+// avatarMaxBytes. All other shapes (nil, legacy string, S3 ref, undecodable)
+// are returned unchanged. The input map is modified in place.
 func processAvatarPhoto(public map[string]any) map[string]any {
 	if public == nil {
 		return public
@@ -104,6 +114,8 @@ func processAvatarPhoto(public map[string]any) map[string]any {
 	return public
 }
 
+// imageDecode decodes an image, preferring the format hinted by mimeType.
+// Unknown types fall back to JPEG with a PNG retry.
 func imageDecode(r *bytes.Reader, mimeType string) (image.Image, string, error) {
 	switch {
 	case strings.Contains(mimeType, "png"):
@@ -120,6 +132,9 @@ func imageDecode(r *bytes.Reader, mimeType string) (image.Image, string, error) 
 	}
 }
 
+// resizeImage downscales src so its longest side is at most maxSide,
+// preserving aspect ratio with nearest-neighbor sampling (stdlib only).
+// Images already within bounds are returned as-is.
 func resizeImage(src image.Image, maxSide int) image.Image {
 	bounds := src.Bounds()
 	w := bounds.Dx()
