@@ -38,6 +38,9 @@ const (
 // runes with modifiers/ZWJ; anything longer is garbage).
 const maxReactionRunes = 16
 
+// reactionPayload is the JSON body of a reaction add event: the emoji.
+// It travels in {note payload} or, for SDK-limited clients, in the {pub}
+// carrier content (see parseReactionCarrier).
 type reactionPayload struct {
 	Emoji string `json:"emoji"`
 }
@@ -138,6 +141,9 @@ func reactionEmojiFromContent(content any) string {
 	return ""
 }
 
+// isValidReactionEmoji reports whether s is acceptable as a reaction:
+// non-empty and within maxReactionRunes runes (one grapheme cluster with
+// modifiers/ZWJ is usually <= 8 runes; anything longer is garbage).
 func isValidReactionEmoji(emoji string) bool {
 	if emoji == "" {
 		return false

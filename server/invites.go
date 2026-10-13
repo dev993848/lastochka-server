@@ -1,3 +1,10 @@
+// User invites REST API (/v1/invites) and closed-registration enforcement.
+//
+// Registration is closed: a new account must carry an invite code in its
+// `acc.tags` ("invite:<code>"). Invite CRUD and the invitation graph are
+// PostgreSQL-backed (see invites_postgres.go, invites_stub.go); the pure
+// helpers at the bottom of this file are unit-tested in invites_test.go.
+
 package main
 
 import (
@@ -10,6 +17,7 @@ import (
 	"github.com/tinode/chat/server/store/types"
 )
 
+// invite is the full invite record returned on creation.
 type invite struct {
 	ID                 string     `json:"id"`
 	Code               string     `json:"code,omitempty"`
@@ -25,6 +33,7 @@ type invite struct {
 	Note               string     `json:"note,omitempty"`
 }
 
+// inviteListItem is the invite projection for listings (code visible to owner).
 type inviteListItem struct {
 	ID                 string     `json:"id"`
 	Code               string     `json:"code"`
@@ -39,12 +48,15 @@ type inviteListItem struct {
 	Note               string     `json:"note,omitempty"`
 }
 
+// createInviteRequest is the JSON body of POST /v1/invites.
 type createInviteRequest struct {
 	MaxUses       int    `json:"max_uses"`
 	ExpiresInDays int    `json:"expires_in_days"`
 	Note          string `json:"note"`
 }
 
+// updateInviteRequest is the JSON body of PATCH /v1/invites/{id}.
+// Nil pointers mean "field not present, keep as is".
 type updateInviteRequest struct {
 	Status    *string `json:"status"`
 	MaxUses   *int    `json:"max_uses"`
@@ -52,6 +64,7 @@ type updateInviteRequest struct {
 	ExpiresAt *string `json:"expires_at"`
 }
 
+// inviteConnection is one edge of the invitation graph (who invited whom).
 type inviteConnection struct {
 	UserID              string     `json:"user_id"`
 	InvitedByUserID     string     `json:"invited_by_user_id,omitempty"`
@@ -66,6 +79,8 @@ type inviteConnection struct {
 	DirectSuspicionHits int        `json:"direct_suspicion_hits,omitempty"`
 }
 
+// invitePreview is the public pre-registration view of an invite by code.
+// It carries no ids usable for enumeration.
 type invitePreview struct {
 	Code               string     `json:"code"`
 	InviterDisplayName string     `json:"inviter_display_name,omitempty"`
@@ -77,6 +92,7 @@ type invitePreview struct {
 	Valid              bool       `json:"valid"`
 }
 
+// handleInvites routes GET/POST /v1/invites (list / create) for the authenticated user.
 func handleInvites(w http.ResponseWriter, r *http.Request) {
 	uid, ok := authenticateUserRequest(w, r)
 	if !ok {
@@ -93,6 +109,7 @@ func handleInvites(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleInviteByID routes PATCH/DELETE /v1/invites/{id} (update / revoke).
 func handleInviteByID(w http.ResponseWriter, r *http.Request) {
 	uid, ok := authenticateUserRequest(w, r)
 	if !ok {
@@ -126,6 +143,7 @@ func handleInviteByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleInviteGraph writes the invitation graph visible to the authenticated user.
 func handleInviteGraph(w http.ResponseWriter, r *http.Request) {
 	uid, ok := authenticateUserRequest(w, r)
 	if !ok {
@@ -144,6 +162,9 @@ func handleInviteGraph(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusOK, graph)
 }
 
+// handleInvitePreview is unauthenticated: it resolves an invite code to its
+// public preview so the registration UI can show the inviter. Only short,
+// typed errors are exposed.
 func handleInvitePreview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -166,6 +187,7 @@ func handleInvitePreview(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusOK, preview)
 }
 
+// handleInvitesList writes the authenticated user's invites as {"items": [...]}.
 func handleInvitesList(w http.ResponseWriter, uid types.Uid) {
 	items, err := listInvitesByUser(uid.UserId())
 	if err != nil {
@@ -175,6 +197,8 @@ func handleInvitesList(w http.ResponseWriter, uid types.Uid) {
 	writeJSONStatus(w, http.StatusOK, map[string]any{"items": items})
 }
 
+// handleInvitesCreate validates the request body (max 20 uses, max 90 days,
+// 500-char note) and stores a new invite.
 func handleInvitesCreate(w http.ResponseWriter, r *http.Request, uid types.Uid) {
 	var req createInviteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -206,6 +230,7 @@ func handleInvitesCreate(w http.ResponseWriter, r *http.Request, uid types.Uid) 
 	writeJSONStatus(w, http.StatusCreated, item)
 }
 
+// handleInvitesUpdate validates and applies a partial update to the user's invite.
 func handleInvitesUpdate(w http.ResponseWriter, r *http.Request, uid types.Uid, id string) {
 	var req updateInviteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -245,6 +270,7 @@ func handleInvitesUpdate(w http.ResponseWriter, r *http.Request, uid types.Uid, 
 	writeJSONStatus(w, http.StatusOK, item)
 }
 
+// handleInvitesDelete revokes the user's invite, 404 when absent.
 func handleInvitesDelete(w http.ResponseWriter, uid types.Uid, id string) {
 	if err := revokeInviteRecord(uid.UserId(), id); err == errInviteNotFound {
 		writeJSONError(w, http.StatusNotFound, "invite not found")
@@ -256,6 +282,8 @@ func handleInvitesDelete(w http.ResponseWriter, uid types.Uid, id string) {
 	writeJSONStatus(w, http.StatusOK, map[string]any{"success": true})
 }
 
+// inviteCodeFromAccountCreate extracts the invite code from an {acc} account
+// creation message's tags ("invite:<code>"). It returns "" when absent.
 func inviteCodeFromAccountCreate(msg *ClientComMessage) string {
 	if msg == nil || msg.Acc == nil {
 		return ""
@@ -283,6 +311,10 @@ func inviteClientErrorCode(err error) string {
 	return "invite_check_failed"
 }
 
+// enforceInviteForRegistration is the closed-registration gate called during
+// account creation. It consumes the invite from acc.tags, stamps derived tags
+// (reg:invite, reg:suspicious) on the user and returns false (with the client
+// already answered) when registration must be rejected.
 func enforceInviteForRegistration(s *Session, msg *ClientComMessage, user *types.User, creds []MsgCredClient) bool {
 	if !inviteRegistrationRequired() {
 		return true
@@ -315,6 +347,8 @@ func enforceInviteForRegistration(s *Session, msg *ClientComMessage, user *types
 	return true
 }
 
+// buildInviteDerivedTags returns the account tags derived from a consumed
+// invite: always "reg:invite", plus "reg:suspicious" on anti-abuse signals.
 func buildInviteDerivedTags(result inviteConsumptionResult) []string {
 	tags := []string{"reg:invite"}
 	if result.SuspicionScore > 0 {
